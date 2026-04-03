@@ -56,7 +56,7 @@ tts:
 # Image generation defaults
 image_generation:
   provider: "gemini"
-  model: "gemini-2.0-flash-exp"
+  model: "gemini-2.5-flash-image"
   style: "photorealistic"
   width: 1080
   height: 1920
@@ -64,7 +64,7 @@ image_generation:
 # Scenario generation defaults
 scenario:
   provider: "gemini"
-  model: "gemini-2.0-flash"
+  model: "gemini-2.5-flash"
 
 # Post-Bridge (shared API — all brands use the same key)
 upload:

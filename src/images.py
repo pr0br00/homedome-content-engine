@@ -73,7 +73,7 @@ class ImageGenerator:
 
     def _generate_with_gemini(self, prompt: str, output_path: str) -> str:
         """Generate image using Gemini model with image generation capability."""
-        model = genai.GenerativeModel("gemini-2.0-flash-exp")
+        model = genai.GenerativeModel("gemini-2.5-flash-image")
         response = model.generate_content(
             f"Generate an image: {prompt}",
             generation_config=genai.GenerationConfig(
