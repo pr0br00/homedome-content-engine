@@ -57,7 +57,7 @@ subtitles:
 
 tts:
   provider: "elevenlabs"
-  voice_id: "JBFqnCBsd6RMkjVDRZzb"  # George
+  voice_id: "TX3LPaxmHKxFdv7VOQHJ"  # Liam - Energetic, Social Media Creator
   model: "eleven_multilingual_v2"
   stability: 0.5
   similarity_boost: 0.75
