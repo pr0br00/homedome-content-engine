@@ -41,12 +41,12 @@ slides:
 subtitles:
   enabled: true
   style: "word_highlight"  # word_highlight | karaoke | static
-  font_size: 48
-  color: "#FFFFFF"
-  highlight_color: "#FFC107"
+  font_size: 52
+  color: "#FFFF00"           # Yellow main text — catches attention
+  highlight_color: "#FFFFFF"  # White for keyword pop-out
   background_color: "#000000AA"
   position: "bottom"
-  margin_bottom: 200
+  margin_bottom: 180
 
 # TTS defaults (brands can override voice_id, stability, etc.)
 tts:

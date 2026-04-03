@@ -6,6 +6,7 @@ Multi-brand: uses shared video/subtitle config.
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -86,10 +87,53 @@ class VideoAssembler:
 
         return output_path
 
-    def _generate_srt(self, slides, audio_paths):
-        srt_content = ""
+    def _generate_ass(self, slides, audio_paths):
+        """Generate ASS subtitle file with keyword highlighting.
+
+        Uses yellow (#FFFF00) as the main subtitle color.
+        Keywords from each slide are highlighted in white (#FFFFFF) with bold
+        to create a pop-out contrast effect against the yellow base.
+        """
+        main_color = self.sub_config.get("color", "#FFFF00")
+        highlight_color = self.sub_config.get("highlight_color", "#FFFFFF")
+        font_size = self.sub_config.get("font_size", 52)
+        margin_bottom = self.sub_config.get("margin_bottom", 180)
+
+        def rgb_to_ass(hex_color):
+            """Convert #RRGGBB to &HBBGGRR& ASS format."""
+            h = hex_color.lstrip("#")
+            if len(h) >= 6:
+                r, g, b = h[0:2], h[2:4], h[4:6]
+                return f"&H00{b}{g}{r}&"
+            return "&H0000FFFF&"
+
+        ass_main = rgb_to_ass(main_color)
+        ass_highlight = rgb_to_ass(highlight_color)
+
+        # Detect font
+        font_name = "Arial"
+        for fp in ["fonts/Montserrat-Bold.ttf", "fonts/Montserrat-Black.ttf"]:
+            if os.path.exists(fp):
+                font_name = "Montserrat"
+                break
+
+        # ASS header
+        ass_content = f"""[Script Info]
+Title: Content Engine Subtitles
+ScriptType: v4.00+
+PlayResX: {self.width}
+PlayResY: {self.height}
+WrapStyle: 0
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,{font_name},{font_size},{ass_main},&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,40,40,{margin_bottom},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+
         current_time = 0.0
-        sub_index = 1
 
         for slide, audio_path in zip(slides, audio_paths):
             if not audio_path or not os.path.exists(audio_path):
@@ -97,6 +141,7 @@ class VideoAssembler:
 
             duration = self.get_audio_duration(audio_path) + 0.3
             text = slide.tts_script
+            keywords = getattr(slide, 'keywords', []) or []
 
             if self.sub_config.get("style") == "word_highlight":
                 words = text.split()
@@ -109,21 +154,71 @@ class VideoAssembler:
                 if chunks:
                     chunk_duration = duration / len(chunks)
                     for chunk in chunks:
-                        start = self._format_srt_time(current_time)
-                        end = self._format_srt_time(current_time + chunk_duration)
-                        srt_content += f"{sub_index}\n{start} --> {end}\n{chunk}\n\n"
+                        start = self._format_ass_time(current_time)
+                        end = self._format_ass_time(current_time + chunk_duration)
+                        styled_chunk = self._highlight_keywords(chunk, keywords, ass_highlight)
+                        ass_content += f"Dialogue: 0,{start},{end},Default,,0,0,0,,{styled_chunk}\n"
                         current_time += chunk_duration
-                        sub_index += 1
                 else:
                     current_time += duration
             else:
-                start = self._format_srt_time(current_time)
-                end = self._format_srt_time(current_time + duration)
-                srt_content += f"{sub_index}\n{start} --> {end}\n{text}\n\n"
+                start = self._format_ass_time(current_time)
+                end = self._format_ass_time(current_time + duration)
+                styled_text = self._highlight_keywords(text, keywords, ass_highlight)
+                ass_content += f"Dialogue: 0,{start},{end},Default,,0,0,0,,{styled_text}\n"
                 current_time += duration
-                sub_index += 1
 
-        return srt_content
+        return ass_content
+
+    def _highlight_keywords(self, text, keywords, highlight_ass_color):
+        """Highlight keyword matches in text using ASS override tags."""
+        if not keywords:
+            return text
+
+        result = text
+        for kw in keywords:
+            pattern = re.compile(re.escape(kw), re.IGNORECASE)
+            result = pattern.sub(
+                lambda m: f"{{\\c{highlight_ass_color}\\b1}}{m.group()}{{\\r}}",
+                result,
+            )
+        return result
+
+    def _format_ass_time(self, seconds):
+        """Format time as H:MM:SS.CC for ASS format."""
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+        centis = int((seconds % 1) * 100)
+        return f"{hours}:{minutes:02d}:{secs:02d}.{centis:02d}"
+
+    def _generate_srt_fallback(self, slides, audio_paths, srt_path):
+        """Generate simple SRT file as fallback if ASS fails."""
+        srt_content = ""
+        current_time = 0.0
+        sub_index = 1
+
+        for slide, audio_path in zip(slides, audio_paths):
+            if not audio_path or not os.path.exists(audio_path):
+                continue
+            duration = self.get_audio_duration(audio_path) + 0.3
+            text = slide.tts_script
+            words = text.split()
+            chunk_size = 3
+            chunks = [" ".join(words[i:i + chunk_size]) for i in range(0, len(words), chunk_size)]
+            if chunks:
+                chunk_duration = duration / len(chunks)
+                for chunk in chunks:
+                    start = self._format_srt_time(current_time)
+                    end = self._format_srt_time(current_time + chunk_duration)
+                    srt_content += f"{sub_index}\n{start} --> {end}\n{chunk}\n\n"
+                    current_time += chunk_duration
+                    sub_index += 1
+            else:
+                current_time += duration
+
+        with open(srt_path, "w", encoding="utf-8") as f:
+            f.write(srt_content)
 
     def _format_srt_time(self, seconds):
         hours = int(seconds // 3600)
@@ -167,25 +262,17 @@ class VideoAssembler:
             print("  ✅ Segments merged")
 
             if add_subtitles and self.sub_config.get("enabled", True):
-                srt_path = os.path.join(tmpdir, "subtitles.srt")
-                srt_content = self._generate_srt(slides, audio_paths)
-                with open(srt_path, "w", encoding="utf-8") as f:
-                    f.write(srt_content)
+                ass_path = os.path.join(tmpdir, "subtitles.ass")
+                ass_content = self._generate_ass(slides, audio_paths)
+                with open(ass_path, "w", encoding="utf-8") as f:
+                    f.write(ass_content)
 
-                font_size = self.sub_config.get("font_size", 48)
-                margin_bottom = self.sub_config.get("margin_bottom", 200)
+                # Build fontsdir option if custom fonts exist
+                fonts_opt = ""
+                if os.path.exists("fonts"):
+                    fonts_opt = f":fontsdir=fonts"
 
-                subtitle_filter = (
-                    f"subtitles={srt_path}:force_style='"
-                    f"FontSize={font_size},"
-                    f"FontName=Arial,"
-                    f"PrimaryColour=&H00FFFFFF,"
-                    f"OutlineColour=&H00000000,"
-                    f"BackColour=&H80000000,"
-                    f"Outline=2,Shadow=1,"
-                    f"MarginV={margin_bottom},"
-                    f"Alignment=2,Bold=1'"
-                )
+                subtitle_filter = f"ass={ass_path}{fonts_opt}"
 
                 result = subprocess.run([
                     "ffmpeg", "-y", "-i", merged_path,
@@ -195,10 +282,37 @@ class VideoAssembler:
                 ], capture_output=True, text=True)
 
                 if result.returncode != 0:
-                    print(f"  ⚠️  Subtitle burn failed, copying without subs")
-                    subprocess.run(["cp", merged_path, output_path], check=True)
+                    print(f"  ⚠️  ASS subtitle burn failed: {result.stderr[-300:]}")
+                    print(f"  ⚠️  Trying SRT fallback...")
+                    # Fallback to simple SRT with yellow styling
+                    srt_path = os.path.join(tmpdir, "subtitles_fallback.srt")
+                    self._generate_srt_fallback(slides, audio_paths, srt_path)
+                    font_size = self.sub_config.get("font_size", 52)
+                    margin_bottom = self.sub_config.get("margin_bottom", 180)
+                    subtitle_filter = (
+                        f"subtitles={srt_path}:force_style='"
+                        f"FontSize={font_size},"
+                        f"FontName=Montserrat,"
+                        f"PrimaryColour=&H0000FFFF,"
+                        f"OutlineColour=&H00000000,"
+                        f"BackColour=&H80000000,"
+                        f"Outline=3,Shadow=1,"
+                        f"MarginV={margin_bottom},"
+                        f"Alignment=2,Bold=1'"
+                    )
+                    result2 = subprocess.run([
+                        "ffmpeg", "-y", "-i", merged_path,
+                        "-vf", subtitle_filter,
+                        "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+                        "-c:a", "copy", output_path,
+                    ], capture_output=True, text=True)
+                    if result2.returncode != 0:
+                        print(f"  ⚠️  SRT fallback also failed, copying without subs")
+                        subprocess.run(["cp", merged_path, output_path], check=True)
+                    else:
+                        print("  ✅ Yellow subtitles burned in (SRT fallback)")
                 else:
-                    print("  ✅ Subtitles burned in")
+                    print("  ✅ Yellow subtitles with keyword highlighting burned in")
             else:
                 subprocess.run(["cp", merged_path, output_path], check=True)
 

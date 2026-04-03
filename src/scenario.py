@@ -25,6 +25,7 @@ class Slide(BaseModel):
     text_on_screen: str
     tts_script: str
     image_prompt: str
+    keywords: list[str] = []  # Key words to highlight in subtitles
     duration_hint: float = 0.0
 
 
@@ -60,7 +61,8 @@ GENERATION_PROMPT = """Створи {count} сценаріїв для корот
           "slide_number": 1,
           "text_on_screen": "Короткий текст НА СЛАЙДІ (до 12 слів, великі літери для акценту)",
           "tts_script": "Повний текст який читає диктор для цього слайду (може бути довшим)",
-          "image_prompt": "English prompt for AI image generation. Photorealistic, 9:16 vertical, related to the slide topic."
+          "image_prompt": "English prompt for AI image generation. Photorealistic, 9:16 vertical, related to the slide topic.",
+          "keywords": ["ключове_слово1", "ключове_слово2"]
         }}
       ],
       "hashtags": ["#hashtag1", "#hashtag2", ...],
@@ -77,6 +79,9 @@ GENERATION_PROMPT = """Створи {count} сценаріїв для корот
 
 Image prompts повинні бути англійською, фотореалістичні, вертикальні (9:16).
 Уникай однакових промтів — кожне зображення має бути унікальним.
+
+keywords — це 2-3 найважливіших слова з tts_script, які будуть виділені жовтим у субтитрах.
+Обирай слова які несуть головний сенс або емоцію (числа, факти, проблему, рішення).
 """
 
 
@@ -102,6 +107,77 @@ class ScenarioGenerator:
 
         self.pillars = self.bc.pillars
         self.slides_count = self.config["scenario"].get("slides_count", 5)
+
+    def _parse_json_robust(self, text: str) -> dict:
+        """Parse JSON from Gemini response with aggressive cleanup."""
+        import re
+
+        # Step 1: Try direct parse
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+
+        # Step 2: Basic cleanup — trailing commas, quotes
+        cleaned = re.sub(r',\s*([\]}])', r'\1', text)
+        cleaned = cleaned.replace("\u2018", "'").replace("\u2019", "'")
+        # Fix unescaped control characters inside strings
+        cleaned = re.sub(r'[\x00-\x1f]', ' ', cleaned)
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            pass
+
+        # Step 3: Replace problematic apostrophes in Ukrainian text
+        cleaned2 = cleaned.replace("'", "\u02BC")
+        try:
+            return json.loads(cleaned2)
+        except json.JSONDecodeError:
+            pass
+
+        # Step 4: Try to extract the full JSON object
+        match = re.search(r'\{[\s\S]*\}', cleaned)
+        if match:
+            try:
+                return json.loads(match.group())
+            except json.JSONDecodeError:
+                pass
+
+        # Step 5: Extract individual scenario objects and rebuild
+        print("  ⚠️  Large JSON failed, extracting individual scenarios...")
+        scenario_blocks = []
+        # Find all objects that have "title" key
+        pattern = r'\{[^{}]*"title"[^{}]*"slides"\s*:\s*\[[\s\S]*?\]\s*[^{}]*\}'
+        matches = re.finditer(pattern, cleaned)
+        for m in matches:
+            try:
+                obj = json.loads(m.group())
+                scenario_blocks.append(obj)
+            except json.JSONDecodeError:
+                # Try cleaning this individual block
+                block = re.sub(r',\s*([\]}])', r'\1', m.group())
+                block = block.replace("'", "\u02BC")
+                try:
+                    obj = json.loads(block)
+                    scenario_blocks.append(obj)
+                except json.JSONDecodeError:
+                    continue
+
+        if scenario_blocks:
+            print(f"  ✅ Recovered {len(scenario_blocks)} scenario(s) from broken JSON")
+            return {"scenarios": scenario_blocks}
+
+        # Step 6: Nuclear option — find first complete scenario
+        match = re.search(r'\{[^{}]*"title"\s*:\s*"[^"]*"[\s\S]*?"slides"\s*:\s*\[[\s\S]*?\][\s\S]*?\}', cleaned)
+        if match:
+            try:
+                obj = json.loads(match.group())
+                print("  ✅ Recovered 1 scenario from broken JSON (nuclear parse)")
+                return {"scenarios": [obj]}
+            except json.JSONDecodeError:
+                pass
+
+        raise ValueError(f"Could not parse Gemini response as JSON after all attempts: {text[:500]}...")
 
     def _pick_pillar(self, pillar_id: Optional[str] = None) -> dict:
         if pillar_id:
@@ -150,24 +226,7 @@ class ScenarioGenerator:
                 text = text[:-3]
             text = text.strip()
 
-        try:
-            raw = json.loads(text)
-        except json.JSONDecodeError:
-            # Try to fix common JSON issues and extract
-            import re
-            # Remove trailing commas before } or ]
-            cleaned = re.sub(r',\s*([\]}])', r'\1', text)
-            # Fix unescaped single quotes inside strings
-            cleaned = cleaned.replace("'", "\u2019")
-            try:
-                raw = json.loads(cleaned)
-            except json.JSONDecodeError:
-                # Last resort: extract first JSON object
-                match = re.search(r'\{[\s\S]*\}', cleaned)
-                if match:
-                    raw = json.loads(match.group())
-                else:
-                    raise ValueError(f"Could not parse Gemini response as JSON: {text[:300]}...")
+        raw = self._parse_json_robust(text)
 
         scenarios = []
 
@@ -180,6 +239,7 @@ class ScenarioGenerator:
                     text_on_screen=s["text_on_screen"],
                     tts_script=s["tts_script"],
                     image_prompt=s["image_prompt"],
+                    keywords=s.get("keywords", []),
                 )
                 for s in item["slides"]
             ]
