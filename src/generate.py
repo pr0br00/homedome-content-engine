@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """
-HomeDome Content Engine — Main Orchestrator
+Content Engine — Main Orchestrator
 Runs the complete pipeline: scenario → images → slides → TTS → video → upload.
+Supports multi-brand: use --brand to select which brand to generate for.
 
 Usage:
-    python -m src.generate                    # Generate 1 video (random pillar)
-    python -m src.generate --count 3          # Generate 3 videos
-    python -m src.generate --pillar fear_hook # Specific content pillar
-    python -m src.generate --no-upload        # Skip upload step
-    python -m src.generate --dry-run          # Only generate scenario, no media
+    python -m src.generate                          # Default brand (homedome)
+    python -m src.generate --brand homedome         # Specific brand
+    python -m src.generate --brand my-other-biz     # Another brand
+    python -m src.generate --count 3                # Generate 3 videos
+    python -m src.generate --pillar fear_hook       # Specific content pillar
+    python -m src.generate --no-upload              # Skip upload step
+    python -m src.generate --dry-run                # Only generate scenario
+    python -m src.generate --list-brands            # Show available brands
 """
 
 import argparse
@@ -21,9 +25,9 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from src.brand import BrandConfig
 from src.scenario import ScenarioGenerator, Scenario
 from src.images import ImageGenerator
 from src.slides import SlideRenderer
@@ -35,12 +39,17 @@ from src.upload import ContentUploader
 class ContentEngine:
     """Main orchestrator for the content generation pipeline."""
 
-    def __init__(self, config_path: str = "config.yaml"):
-        self.config_path = config_path
-        self.output_base = "output"
-        Path(self.output_base).mkdir(exist_ok=True)
+    def __init__(self, brand_config: BrandConfig):
+        self.bc = brand_config
+        self.config = brand_config.config
+        # Brand-specific output directory
+        self.output_base = str(Path("output") / brand_config.brand_id)
+        Path(self.output_base).mkdir(parents=True, exist_ok=True)
 
-        print("🔋 HomeDome Content Engine v1.0")
+        print(f"🔋 Content Engine v2.0 — Multi-Brand")
+        print(f"🏷️  Brand: {brand_config.brand_name}")
+        print(f"🌐 Domain: {brand_config.domain}")
+        print(f"🗣️  Language: {brand_config.language}")
         print("=" * 50)
 
     def run_pipeline(
@@ -56,13 +65,14 @@ class ContentEngine:
 
         # ─── Step 1: Generate Scenarios ───
         print("\n📝 STEP 1: Generating scenarios...")
-        scenario_gen = ScenarioGenerator(self.config_path)
+        scenario_gen = ScenarioGenerator(self.bc)
         scenarios = scenario_gen.generate(count=count, pillar_id=pillar_id)
         print(f"  ✅ Generated {len(scenarios)} scenario(s)")
 
         for i, scenario in enumerate(scenarios):
             print(f"\n{'='*50}")
             print(f"📹 VIDEO {i+1}/{len(scenarios)}: {scenario.title}")
+            print(f"🏷️  Brand: {scenario.brand_id}")
             print(f"🎯 Pillar: {scenario.pillar}")
             print(f"🪝 Hook: {scenario.hook}")
             print(f"{'='*50}")
@@ -70,13 +80,13 @@ class ContentEngine:
             video_dir = str(Path(self.output_base) / scenario.id)
             Path(video_dir).mkdir(parents=True, exist_ok=True)
 
-            # Save scenario
             scenario_path = scenario_gen.save_scenario(scenario, self.output_base)
             print(f"  💾 Scenario saved: {scenario_path}")
 
             if dry_run:
                 results.append({
                     "scenario_id": scenario.id,
+                    "brand_id": scenario.brand_id,
                     "title": scenario.title,
                     "status": "dry_run",
                     "scenario_path": scenario_path,
@@ -90,6 +100,7 @@ class ContentEngine:
                 print(f"\n  ❌ FAILED: {e}")
                 results.append({
                     "scenario_id": scenario.id,
+                    "brand_id": scenario.brand_id,
                     "title": scenario.title,
                     "status": "failed",
                     "error": str(e),
@@ -97,76 +108,66 @@ class ContentEngine:
 
         # ─── Summary ───
         elapsed = time.time() - start_time
+        ok_count = len([r for r in results if r.get("status") == "success"])
         print(f"\n{'='*50}")
-        print(f"🏁 PIPELINE COMPLETE")
+        print(f"🏁 PIPELINE COMPLETE — {self.bc.brand_name}")
         print(f"⏱️  Total time: {elapsed:.1f}s")
-        print(f"📹 Videos: {len([r for r in results if r.get('status') == 'success'])}/{len(scenarios)}")
+        print(f"📹 Videos: {ok_count}/{len(scenarios)}")
 
-        # Save run report
         report_path = Path(self.output_base) / f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         report_path.write_text(json.dumps(results, indent=2, ensure_ascii=False))
         print(f"📊 Report: {report_path}")
 
         return results
 
-    def _process_video(
-        self,
-        scenario: Scenario,
-        video_dir: str,
-        skip_upload: bool,
-    ) -> dict:
-        """Process a single video through the pipeline."""
+    def _process_video(self, scenario: Scenario, video_dir: str, skip_upload: bool) -> dict:
         result = {
             "scenario_id": scenario.id,
+            "brand_id": scenario.brand_id,
             "title": scenario.title,
             "pillar": scenario.pillar,
         }
 
         # ─── Step 2: Generate Background Images ───
         print("\n  🎨 STEP 2: Generating background images...")
-        img_gen = ImageGenerator(self.config_path)
+        img_gen = ImageGenerator(self.bc)
         bg_paths = img_gen.generate_slide_backgrounds(
-            slides=scenario.slides,
-            output_dir=video_dir,
+            slides=scenario.slides, output_dir=video_dir,
         )
         result["backgrounds"] = bg_paths
 
         # ─── Step 3: Render Slides ───
         print("\n  🖼️  STEP 3: Rendering slides...")
-        renderer = SlideRenderer(self.config_path)
+        renderer = SlideRenderer(self.bc)
         slide_paths = renderer.render_all_slides(
-            slides=scenario.slides,
-            background_paths=bg_paths,
+            slides=scenario.slides, background_paths=bg_paths,
             output_dir=video_dir,
         )
         result["slides"] = slide_paths
 
         # ─── Step 4: Generate TTS Audio ───
         print("\n  🗣️  STEP 4: Generating TTS audio...")
-        tts = TTSGenerator(self.config_path)
+        tts = TTSGenerator(self.bc)
         audio_paths = tts.generate_slide_audio(
-            slides=scenario.slides,
-            output_dir=video_dir,
+            slides=scenario.slides, output_dir=video_dir,
         )
         result["audio"] = audio_paths
 
         # ─── Step 5: Assemble Video ───
         print("\n  🎬 STEP 5: Assembling video...")
-        assembler = VideoAssembler(self.config_path)
+        assembler = VideoAssembler(self.bc)
         video_filename = f"{scenario.id}.mp4"
         video_path = str(Path(video_dir) / video_filename)
         assembler.assemble_video(
-            slide_paths=slide_paths,
-            audio_paths=audio_paths,
-            slides=scenario.slides,
-            output_path=video_path,
+            slide_paths=slide_paths, audio_paths=audio_paths,
+            slides=scenario.slides, output_path=video_path,
         )
         result["video_path"] = video_path
 
         # ─── Step 6: Upload ───
         if not skip_upload:
-            print("\n  📤 STEP 6: Uploading...")
-            uploader = ContentUploader(self.config_path)
+            print("\n  📤 STEP 6: Uploading via Post-Bridge...")
+            uploader = ContentUploader(self.bc)
             upload_results = uploader.upload_all(
                 video_path=video_path,
                 title=scenario.title,
@@ -188,7 +189,12 @@ class ContentEngine:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="HomeDome Content Engine — Generate TikTok/Shorts videos"
+        description="Content Engine — Generate TikTok/Shorts videos for any brand"
+    )
+    parser.add_argument(
+        "--brand", "-b",
+        type=str, default=None,
+        help="Brand profile ID (default: from config.yaml)",
     )
     parser.add_argument(
         "--count", "-n",
@@ -198,8 +204,7 @@ def main():
     parser.add_argument(
         "--pillar", "-p",
         type=str, default=None,
-        choices=["fear_hook", "education", "comparison", "case_study", "myth_bust", "news_trend"],
-        help="Content pillar (default: random weighted)",
+        help="Content pillar ID (default: random weighted)",
     )
     parser.add_argument(
         "--no-upload",
@@ -214,15 +219,37 @@ def main():
     parser.add_argument(
         "--config", "-c",
         type=str, default="config.yaml",
-        help="Path to config file",
+        help="Path to global config file",
+    )
+    parser.add_argument(
+        "--list-brands",
+        action="store_true",
+        help="List available brand profiles and exit",
     )
 
     args = parser.parse_args()
-
-    # Load environment variables
     load_dotenv()
 
-    engine = ContentEngine(config_path=args.config)
+    # List brands mode
+    if args.list_brands:
+        brands = BrandConfig.list_brands()
+        print(f"📋 Available brands ({len(brands)}):")
+        for brand_id in brands:
+            try:
+                bc = BrandConfig(brand_id=brand_id, config_path=args.config)
+                print(f"  • {brand_id} — {bc.brand_name} ({bc.domain})")
+            except Exception as e:
+                print(f"  • {brand_id} — ❌ Error: {e}")
+        return
+
+    # Load brand config
+    try:
+        bc = BrandConfig(brand_id=args.brand, config_path=args.config)
+    except FileNotFoundError as e:
+        print(f"❌ {e}")
+        sys.exit(1)
+
+    engine = ContentEngine(brand_config=bc)
     results = engine.run_pipeline(
         count=args.count,
         pillar_id=args.pillar,
@@ -230,7 +257,6 @@ def main():
         dry_run=args.dry_run,
     )
 
-    # Exit with error if any failed
     failed = [r for r in results if r.get("status") == "failed"]
     if failed:
         sys.exit(1)

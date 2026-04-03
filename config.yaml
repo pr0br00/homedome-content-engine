@@ -1,16 +1,9 @@
-# ===== HomeDome Content Engine Configuration =====
+# ===== Content Engine — Global Configuration =====
+# Brand-specific settings go in brands/<brand-id>.yaml
+# This file has shared defaults that apply to ALL brands.
 
-brand:
-  name: "HomeDome"
-  domain: "homedome.com.ua"
-  tagline: "Енергонезалежність для кожного"
-  colors:
-    primary: "#1B5E20"      # Dark green
-    secondary: "#FFC107"    # Amber/gold
-    accent: "#2196F3"       # Blue
-    dark: "#121212"
-    light: "#FFFFFF"
-  logo_path: "assets/logo.png"
+# Default brand (used when --brand flag is not specified)
+default_brand: "homedome"
 
 video:
   width: 1080
@@ -20,8 +13,8 @@ video:
   codec: "libx264"
   audio_codec: "aac"
 
+# Default slide presets (brands can override)
 slides:
-  # Design presets (rotated randomly for variety)
   presets:
     - name: "gradient_dark"
       overlay_opacity: 0.65
@@ -52,80 +45,34 @@ subtitles:
   color: "#FFFFFF"
   highlight_color: "#FFC107"
   background_color: "#000000AA"
-  position: "bottom"  # bottom | center
+  position: "bottom"
   margin_bottom: 200
 
+# TTS defaults (brands can override voice_id, stability, etc.)
 tts:
   provider: "elevenlabs"
-  voice_id: "TX3LPaxmHKxFdv7VOQHJ"  # Liam - Energetic, Social Media Creator
   model: "eleven_multilingual_v2"
-  stability: 0.5
-  similarity_boost: 0.75
-  speed: 1.0
 
+# Image generation defaults
 image_generation:
   provider: "gemini"
-  model: "gemini-2.0-flash-exp"  # or imagen-3.0-generate-001
+  model: "gemini-2.0-flash-exp"
   style: "photorealistic"
   width: 1080
   height: 1920
 
+# Scenario generation defaults
 scenario:
   provider: "gemini"
   model: "gemini-2.0-flash"
-  language: "uk"  # Ukrainian
-  slides_count: 5  # 4-6 slides per video
-  max_words_per_slide: 15
 
-  # Content pillars (rotated for variety)
-  pillars:
-    - id: "fear_hook"
-      name: "Страх/Проблема"
-      description: "Відключення світла, аварії, проблеми без ІБП"
-      weight: 3
-    - id: "education"
-      name: "Освітній"
-      description: "Як працює сонячна станція, ESS, ІБП — просто і зрозуміло"
-      weight: 3
-    - id: "comparison"
-      name: "Порівняння"
-      description: "ІБП vs генератор, різні типи батарей, бренди"
-      weight: 2
-    - id: "case_study"
-      name: "Кейс/Результат"
-      description: "Реальні клієнти, встановлення, цифри економії"
-      weight: 2
-    - id: "myth_bust"
-      name: "Розвінчання міфів"
-      description: "Популярні помилки про сонячні панелі, ІБП, ESS"
-      weight: 2
-    - id: "news_trend"
-      name: "Новини/Тренди"
-      description: "Зелений тариф, нові закони, тренди ринку енергетики"
-      weight: 1
-
+# Post-Bridge (shared API — all brands use the same key)
 upload:
-  google_drive:
+  post_bridge:
     enabled: true
-    folder_id: "${GOOGLE_DRIVE_FOLDER_ID}"
-  youtube:
-    enabled: true
-    privacy: "public"
-    category: "28"  # Science & Technology
-    default_tags:
-      - "ІБП"
-      - "сонячні панелі"
-      - "ESS"
-      - "HomeDome"
-      - "енергонезалежність"
-      - "сонячна станція"
-      - "безперебійник"
-      - "автономне живлення"
-  tiktok:
-    enabled: true
-    privacy_level: "PUBLIC_TO_EVERYONE"
+    schedule_offset_minutes: 0  # 0 = instant
 
-# Content queue
+# Content queue defaults
 queue:
-  videos_per_batch: 3  # Generate 3 videos per run
-  schedule: "daily"     # daily | weekly
+  videos_per_batch: 3
+  schedule: "daily"

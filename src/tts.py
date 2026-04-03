@@ -1,21 +1,22 @@
 """
-HomeDome Content Engine — Text-to-Speech Module
-Uses ElevenLabs API for high-quality Ukrainian TTS.
+Content Engine — Text-to-Speech Module
+Uses ElevenLabs API for high-quality TTS.
+Multi-brand: each brand can have its own voice.
 """
 
 import os
-import yaml
 from pathlib import Path
 
 from elevenlabs import ElevenLabs
+
+from src.brand import BrandConfig
 
 
 class TTSGenerator:
     """Text-to-Speech generator using ElevenLabs."""
 
-    def __init__(self, config_path: str = "config.yaml"):
-        with open(config_path) as f:
-            self.config = yaml.safe_load(f)
+    def __init__(self, brand_config: BrandConfig):
+        self.config = brand_config.config
 
         api_key = os.environ.get("ELEVENLABS_API_KEY")
         if not api_key:
@@ -23,9 +24,12 @@ class TTSGenerator:
 
         self.client = ElevenLabs(api_key=api_key)
         self.tts_config = self.config["tts"]
-        self.voice_id = os.environ.get(
-            "ELEVENLABS_VOICE_ID",
-            self.tts_config.get("voice_id", "JBFqnCBsd6RMkjVDRZzb"),
+
+        # Brand-specific voice (with fallback to env var, then config default)
+        self.voice_id = (
+            self.tts_config.get("voice_id")
+            or os.environ.get("ELEVENLABS_VOICE_ID")
+            or "TX3LPaxmHKxFdv7VOQHJ"
         )
 
     def generate_audio(self, text: str, output_path: str) -> str:
@@ -44,18 +48,13 @@ class TTSGenerator:
             },
         )
 
-        # Write audio chunks to file
         with open(output_path, "wb") as f:
             for chunk in audio_generator:
                 f.write(chunk)
 
         return output_path
 
-    def generate_slide_audio(
-        self,
-        slides: list,
-        output_dir: str,
-    ) -> list[str]:
+    def generate_slide_audio(self, slides: list, output_dir: str) -> list[str]:
         """Generate TTS audio for all slides."""
         paths = []
         total_chars = sum(len(s.tts_script) for s in slides)
@@ -85,7 +84,6 @@ class TTSGenerator:
             audio = MP3(audio_path)
             return audio.info.length
         except Exception:
-            # Fallback: estimate from file size (~16kbps for speech)
             size = os.path.getsize(audio_path)
             return size / (16 * 1024 / 8)
 
@@ -108,15 +106,14 @@ if __name__ == "__main__":
     from dotenv import load_dotenv
     load_dotenv()
 
-    tts = TTSGenerator()
+    bc = BrandConfig()
+    tts = TTSGenerator(bc)
 
-    # Check usage
     usage = tts.get_usage()
     print(f"📊 ElevenLabs usage: {usage}")
 
-    # Test generation
     tts.generate_audio(
-        text="Привіт! Це тестове повідомлення від HomeDome.",
+        text="Привіт! Це тестове повідомлення.",
         output_path="output/test_audio.mp3",
     )
     print("✅ Test audio generated")

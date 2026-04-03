@@ -1,0 +1,122 @@
+# ===== HomeDome — Brand Profile =====
+# UPS, Solar Stations, ESS systems in Ukraine
+# TikTok: @homedomeua | Web: homedome.com.ua
+
+brand:
+  id: "homedome"
+  name: "HomeDome"
+  domain: "homedome.com.ua"
+  tagline: "Енергонезалежність для кожного"
+  language: "uk"  # Ukrainian
+  colors:
+    primary: "#1B5E20"      # Dark green
+    secondary: "#FFC107"    # Amber/gold
+    accent: "#2196F3"       # Blue
+    dark: "#121212"
+    light: "#FFFFFF"
+  logo_path: "assets/homedome_logo.png"
+
+# TTS voice for this brand
+tts:
+  voice_id: "TX3LPaxmHKxFdv7VOQHJ"  # Liam - Energetic, Social Media Creator
+  stability: 0.5
+  similarity_boost: 0.75
+  speed: 1.0
+
+# AI scenario generation
+scenario:
+  system_prompt: |
+    Ти — топовий сценарист коротких відео для TikTok та YouTube Shorts.
+    Ти працюєш на бренд HomeDome (homedome.com.ua) — компанію, яка підбирає,
+    постачає та встановлює ІБП (безперебійники), сонячні станції та ESS-системи
+    (системи накопичення енергії) для домів, квартир та бізнесу в Україні.
+
+    ВАЖЛИВО — правила вірусного контенту:
+    1. ХУК (перші 1-2 секунди) — шокуюче питання, страшний факт, або провокація.
+       Людина МУСИТЬ зупинити скрол. Приклади хуків:
+       - "Твій ІБП вб'є тебе цієї зими ☠️"
+       - "90% українців роблять ЦЮ помилку з генератором"
+       - "Я заощадив 47,000 грн за рік. Ось як."
+       - "Сонячні панелі — РОЗВОД? 🤔"
+    2. КОЖЕН слайд — коротко (до 12 слів на екрані), але TTS може бути довшим.
+    3. Структура: Хук → Проблема → Рішення → Доказ/Факт → CTA
+    4. CTA завжди веде на homedome.com.ua
+    5. Мова — УКРАЇНСЬКА, розмовна, жива, без канцелярщини.
+    6. Емоції > логіка. Страх відключення > технічні характеристики.
+    7. Використовуй числа та конкретику: "47,000 грн", "за 3 дні", "на 15 років".
+
+    Відповідай ТІЛЬКИ у форматі JSON.
+
+  slides_count: 5
+  max_words_per_slide: 15
+
+  pillars:
+    - id: "fear_hook"
+      name: "Страх/Проблема"
+      description: "Відключення світла, аварії, проблеми без ІБП"
+      weight: 3
+    - id: "education"
+      name: "Освітній"
+      description: "Як працює сонячна станція, ESS, ІБП — просто і зрозуміло"
+      weight: 3
+    - id: "comparison"
+      name: "Порівняння"
+      description: "ІБП vs генератор, різні типи батарей, бренди"
+      weight: 2
+    - id: "case_study"
+      name: "Кейс/Результат"
+      description: "Реальні клієнти, встановлення, цифри економії"
+      weight: 2
+    - id: "myth_bust"
+      name: "Розвінчання міфів"
+      description: "Популярні помилки про сонячні панелі, ІБП, ESS"
+      weight: 2
+    - id: "news_trend"
+      name: "Новини/Тренди"
+      description: "Зелений тариф, нові закони, тренди ринку енергетики"
+      weight: 1
+
+# Upload / social media
+upload:
+  youtube:
+    enabled: true
+    default_tags:
+      - "ІБП"
+      - "сонячні панелі"
+      - "ESS"
+      - "HomeDome"
+      - "енергонезалежність"
+      - "сонячна станція"
+      - "безперебійник"
+      - "автономне живлення"
+  tiktok:
+    enabled: true
+
+  # Post-Bridge account IDs for this brand
+  # Run: python -m src.upload --list-accounts to see IDs
+  post_bridge_accounts: []  # Fill after connecting accounts
+
+# Slide design overrides (optional — falls back to global config)
+slides:
+  presets:
+    - name: "gradient_dark"
+      overlay_opacity: 0.65
+      text_color: "#FFFFFF"
+      accent_color: "#FFC107"
+      font_size_title: 72
+      font_size_body: 54
+      font_size_hook: 84
+    - name: "clean_light"
+      overlay_opacity: 0.75
+      text_color: "#FFFFFF"
+      accent_color: "#4CAF50"
+      font_size_title: 68
+      font_size_body: 52
+      font_size_hook: 80
+    - name: "bold_contrast"
+      overlay_opacity: 0.70
+      text_color: "#FFFFFF"
+      accent_color: "#FF5722"
+      font_size_title: 76
+      font_size_body: 56
+      font_size_hook: 88

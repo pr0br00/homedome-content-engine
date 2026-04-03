@@ -1,0 +1,99 @@
+# ===== Brand Profile Template =====
+# Copy this file, rename to your-brand.yaml, and customize.
+# Usage: python -m src.generate --brand your-brand
+
+brand:
+  id: "my-brand"                    # Unique slug (used in filenames, IDs)
+  name: "My Brand"                  # Display name
+  domain: "mybrand.com"             # Website URL for CTA
+  tagline: "Your catchy tagline"    # Used in slide footers
+  language: "uk"                    # Language code: uk, en, ru, etc.
+  colors:
+    primary: "#1B5E20"
+    secondary: "#FFC107"
+    accent: "#2196F3"
+    dark: "#121212"
+    light: "#FFFFFF"
+  logo_path: "assets/my_brand_logo.png"  # Optional
+
+# TTS voice for this brand
+# Browse voices: https://elevenlabs.io/voice-library
+tts:
+  voice_id: "TX3LPaxmHKxFdv7VOQHJ"  # ElevenLabs voice ID
+  stability: 0.5
+  similarity_boost: 0.75
+  speed: 1.0
+
+# AI scenario generation
+scenario:
+  # System prompt — tells AI who you are, what tone to use, etc.
+  # This is the most important part! Customize for your niche.
+  system_prompt: |
+    Ти — топовий сценарист коротких відео для TikTok та YouTube Shorts.
+    Ти працюєш на бренд [YOUR BRAND] ([your-domain.com]).
+
+    [DESCRIBE YOUR BUSINESS IN 2-3 SENTENCES]
+
+    ВАЖЛИВО — правила вірусного контенту:
+    1. ХУК — шокуюче питання, страшний факт, або провокація.
+    2. КОЖЕН слайд — коротко (до 12 слів на екрані).
+    3. Структура: Хук → Проблема → Рішення → Доказ → CTA
+    4. CTA завжди веде на [your-domain.com]
+    5. Мова — УКРАЇНСЬКА, розмовна, жива.
+    6. Емоції > логіка.
+    7. Числа та конкретика.
+
+    Відповідай ТІЛЬКИ у форматі JSON.
+
+  slides_count: 5
+  max_words_per_slide: 15
+
+  # Content pillars — topics your content rotates through
+  # Higher weight = more frequent
+  pillars:
+    - id: "hook"
+      name: "Хук/Проблема"
+      description: "Pain points your audience faces"
+      weight: 3
+    - id: "education"
+      name: "Освітній"
+      description: "How your product/service works"
+      weight: 3
+    - id: "comparison"
+      name: "Порівняння"
+      description: "Your solution vs alternatives"
+      weight: 2
+    - id: "social_proof"
+      name: "Кейс/Відгук"
+      description: "Client stories, results, testimonials"
+      weight: 2
+    - id: "myth_bust"
+      name: "Розвінчання"
+      description: "Common misconceptions in your niche"
+      weight: 1
+
+# Upload / social media
+upload:
+  youtube:
+    enabled: true
+    default_tags:
+      - "YourTag1"
+      - "YourTag2"
+  tiktok:
+    enabled: true
+
+  # Post-Bridge social account IDs for this brand
+  # Run: python -m src.upload --list-accounts
+  post_bridge_accounts: []
+
+# Slide design overrides (optional)
+# If omitted, uses global presets from config.yaml
+# slides:
+#   presets:
+#     - name: "custom_preset"
+#       overlay_opacity: 0.65
+#       text_color: "#FFFFFF"
+#       accent_color: "#FFC107"
+#       font_size_title: 72
+#       font_size_body: 54
+#       font_size_hook: 84

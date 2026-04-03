@@ -1,19 +1,19 @@
 """
-HomeDome Content Engine — Scenario Generator
+Content Engine — Scenario Generator
 Generates viral TikTok/Shorts scripts using Gemini AI.
-Each scenario includes: hook, slides with text, TTS script, image prompts,
-hashtags, and upload metadata.
+Supports multi-brand: each brand has its own system prompt, pillars, and style.
 """
 
 import json
 import random
-import yaml
 import os
 from pathlib import Path
 from typing import Optional
 
 import google.generativeai as genai
 from pydantic import BaseModel
+
+from src.brand import BrandConfig
 
 
 # ─── Data Models ───────────────────────────────────────────────────
@@ -30,38 +30,18 @@ class Slide(BaseModel):
 class Scenario(BaseModel):
     """Complete video scenario."""
     id: str
+    brand_id: str               # Which brand this belongs to
     title: str
-    pillar: str                 # Content pillar (fear_hook, education, etc.)
-    hook: str                   # First 3 seconds hook text
+    pillar: str
+    hook: str
     slides: list[Slide]
     hashtags: list[str]
-    description: str            # Video description for TikTok/YouTube
-    thumbnail_prompt: str       # Prompt for thumbnail generation
-    cta: str                    # Call to action
+    description: str
+    thumbnail_prompt: str
+    cta: str
 
 
-# ─── Prompt Templates ──────────────────────────────────────────────
-
-SYSTEM_PROMPT = """Ти — топовий сценарист коротких відео для TikTok та YouTube Shorts.
-Ти працюєш на бренд HomeDome (homedome.com.ua) — компанію, яка підбирає,
-постачає та встановлює ІБП (безперебійники), сонячні станції та ESS-системи
-(системи накопичення енергії) для домів, квартир та бізнесу в Україні.
-
-ВАЖЛИВО — правила вірусного контенту:
-1. ХУК (перші 1-2 секунди) — шокуюче питання, страшний факт, або провокація.
-   Людина МУСИТЬ зупинити скрол. Приклади хуків:
-   - "Твій ІБП вб'є тебе цієї зими ☠️"
-   - "90% українців роблять ЦЮ помилку з генератором"
-   - "Я заощадив 47,000 грн за рік. Ось як."
-   - "Сонячні панелі — РОЗВОД? 🤔"
-2. КОЖЕН слайд — коротко (до 12 слів на екрані), але TTS може бути довшим.
-3. Структура: Хук → Проблема → Рішення → Доказ/Факт → CTA
-4. CTA завжди веде на homedome.com.ua
-5. Мова — УКРАЇНСЬКА, розмовна, жива, без канцелярщини.
-6. Емоції > логіка. Страх відключення > технічні характеристики.
-7. Використовуй числа та конкретику: "47,000 грн", "за 3 дні", "на 15 років".
-
-Відповідай ТІЛЬКИ у форматі JSON."""
+# ─── Prompt Template ──────────────────────────────────────────────
 
 GENERATION_PROMPT = """Створи {count} сценаріїв для коротких відео (TikTok/YouTube Shorts).
 
@@ -79,10 +59,10 @@ GENERATION_PROMPT = """Створи {count} сценаріїв для корот
           "slide_number": 1,
           "text_on_screen": "Короткий текст НА СЛАЙДІ (до 12 слів, великі літери для акценту)",
           "tts_script": "Повний текст який читає диктор для цього слайду (може бути довшим)",
-          "image_prompt": "English prompt for AI image generation. Photorealistic, 9:16 vertical, related to the slide topic. Energy/home theme."
+          "image_prompt": "English prompt for AI image generation. Photorealistic, 9:16 vertical, related to the slide topic."
         }}
       ],
-      "hashtags": ["#ІБП", "#HomeDome", "#сонячніпанелі", ...],
+      "hashtags": ["#hashtag1", "#hashtag2", ...],
       "description": "Опис для TikTok/YouTube (2-3 речення з CTA)",
       "thumbnail_prompt": "English prompt for eye-catching thumbnail image",
       "cta": "Текст заклику до дії"
@@ -104,9 +84,9 @@ Image prompts повинні бути англійською, фотореалі
 class ScenarioGenerator:
     """Generates video scenarios using Gemini AI."""
 
-    def __init__(self, config_path: str = "config.yaml"):
-        with open(config_path) as f:
-            self.config = yaml.safe_load(f)
+    def __init__(self, brand_config: BrandConfig):
+        self.bc = brand_config
+        self.config = brand_config.config
 
         api_key = os.environ.get("GOOGLE_API_KEY")
         if not api_key:
@@ -114,12 +94,18 @@ class ScenarioGenerator:
 
         genai.configure(api_key=api_key)
         model_name = self.config["scenario"]["model"]
+
+        # Use brand-specific system prompt
+        system_prompt = self.bc.system_prompt
+        if not system_prompt:
+            raise ValueError(f"No system_prompt defined for brand '{self.bc.brand_id}'")
+
         self.model = genai.GenerativeModel(
             model_name=model_name,
-            system_instruction=SYSTEM_PROMPT,
+            system_instruction=system_prompt,
         )
-        self.pillars = self.config["scenario"]["pillars"]
-        self.slides_count = self.config["scenario"]["slides_count"]
+        self.pillars = self.bc.pillars
+        self.slides_count = self.config["scenario"].get("slides_count", 5)
 
     def _pick_pillar(self, pillar_id: Optional[str] = None) -> dict:
         """Pick a content pillar (weighted random or specific)."""
@@ -127,9 +113,11 @@ class ScenarioGenerator:
             for p in self.pillars:
                 if p["id"] == pillar_id:
                     return p
-            raise ValueError(f"Unknown pillar: {pillar_id}")
+            raise ValueError(
+                f"Unknown pillar '{pillar_id}' for brand '{self.bc.brand_id}'. "
+                f"Available: {', '.join(self.bc.pillar_ids)}"
+            )
 
-        # Weighted random selection
         weights = [p["weight"] for p in self.pillars]
         return random.choices(self.pillars, weights=weights, k=1)[0]
 
@@ -161,8 +149,9 @@ class ScenarioGenerator:
         raw = json.loads(response.text)
         scenarios = []
 
+        brand_prefix = self.bc.brand_id[:3]
         for i, item in enumerate(raw.get("scenarios", [raw] if "title" in raw else [])):
-            scenario_id = f"hd_{pillar['id']}_{random.randint(1000, 9999)}"
+            scenario_id = f"{brand_prefix}_{pillar['id']}_{random.randint(1000, 9999)}"
             slides = [
                 Slide(
                     slide_number=s["slide_number"],
@@ -173,16 +162,29 @@ class ScenarioGenerator:
                 for s in item["slides"]
             ]
 
+            # Merge brand default tags with scenario hashtags
+            default_tags = (
+                self.config.get("upload", {})
+                .get("youtube", {})
+                .get("default_tags", [])
+            )
+            hashtags = item.get("hashtags", [])
+            # Add brand hashtag if not present
+            brand_tag = f"#{self.bc.brand_name.replace(' ', '')}"
+            if brand_tag not in hashtags:
+                hashtags.append(brand_tag)
+
             scenarios.append(Scenario(
                 id=scenario_id,
+                brand_id=self.bc.brand_id,
                 title=item["title"],
                 pillar=item.get("pillar", pillar["id"]),
                 hook=item["hook"],
                 slides=slides,
-                hashtags=item.get("hashtags", ["#HomeDome", "#ІБП"]),
+                hashtags=hashtags,
                 description=item.get("description", ""),
                 thumbnail_prompt=item.get("thumbnail_prompt", ""),
-                cta=item.get("cta", "Деталі на homedome.com.ua"),
+                cta=item.get("cta", f"Деталі на {self.bc.domain}"),
             ))
 
         return scenarios
@@ -199,16 +201,16 @@ class ScenarioGenerator:
         return str(file_path)
 
 
-# ─── CLI Entry ─────────────────────────────────────────────────────
-
 if __name__ == "__main__":
     from dotenv import load_dotenv
     load_dotenv()
 
-    gen = ScenarioGenerator()
+    bc = BrandConfig()
+    gen = ScenarioGenerator(bc)
     scenarios = gen.generate(count=1)
     for s in scenarios:
         print(f"\n{'='*60}")
+        print(f"🏷️  Brand: {s.brand_id}")
         print(f"📹 {s.title}")
         print(f"🎯 Pillar: {s.pillar}")
         print(f"🪝 Hook: {s.hook}")

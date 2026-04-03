@@ -1,6 +1,10 @@
 """
 HomeDome Content Engine — Upload Module
-Handles auto-upload to Google Drive, YouTube Shorts, and TikTok.
+Handles auto-upload to TikTok and YouTube Shorts via Post-Bridge API.
+
+Post-Bridge API docs: https://api.post-bridge.com/reference
+Supports: TikTok, YouTube, Instagram, Facebook, LinkedIn, Twitter/X,
+          Threads, Pinterest, Bluesky.
 """
 
 import os
@@ -11,311 +15,203 @@ import requests
 from pathlib import Path
 from typing import Optional
 
-# Google APIs
-from google.oauth2 import service_account
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
+from src.brand import BrandConfig
 
 
-# ─── Google Drive Uploader ─────────────────────────────────────────
+# ─── Post-Bridge API Client ─────────────────────────────────────
 
-class GoogleDriveUploader:
-    """Upload videos to Google Drive."""
+class PostBridgeClient:
+    """Low-level client for Post-Bridge API."""
 
-    SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+    BASE_URL = "https://api.post-bridge.com/v1"
 
-    def __init__(self, config_path: str = "config.yaml"):
-        with open(config_path) as f:
-            self.config = yaml.safe_load(f)
-
-        self.folder_id = os.environ.get(
-            "GOOGLE_DRIVE_FOLDER_ID",
-            self.config["upload"]["google_drive"].get("folder_id", ""),
-        )
-        self.service = self._authenticate()
-
-    def _authenticate(self):
-        """Authenticate with Google Drive API."""
-        creds_path = os.environ.get(
-            "GOOGLE_CREDENTIALS_PATH",
-            "credentials/service_account.json",
-        )
-
-        # Try service account first
-        if os.path.exists(creds_path) and "service_account" in creds_path:
-            creds = service_account.Credentials.from_service_account_file(
-                creds_path, scopes=self.SCOPES
+    def __init__(self, api_key: str = None):
+        self.api_key = api_key or os.environ.get("POST_BRIDGE_API_KEY", "")
+        if not self.api_key:
+            raise ValueError(
+                "POST_BRIDGE_API_KEY not set. "
+                "Get your API key at https://www.post-bridge.com → Settings → API Keys"
             )
-        else:
-            # OAuth2 flow
-            token_path = "credentials/drive_token.json"
-            creds = None
-            if os.path.exists(token_path):
-                creds = Credentials.from_authorized_user_file(token_path, self.SCOPES)
-            if not creds or not creds.valid:
-                if creds and creds.expired and creds.refresh_token:
-                    creds.refresh(Request())
-                else:
-                    flow = InstalledAppFlow.from_client_secrets_file(
-                        creds_path, self.SCOPES
-                    )
-                    creds = flow.run_local_server(port=0)
-                with open(token_path, "w") as f:
-                    f.write(creds.to_json())
 
-        return build("drive", "v3", credentials=creds)
-
-    def upload(self, file_path: str, title: str) -> str:
-        """Upload a file to Google Drive and return the file URL."""
-        file_metadata = {
-            "name": title,
-            "parents": [self.folder_id] if self.folder_id else [],
-        }
-
-        media = MediaFileUpload(
-            file_path,
-            mimetype="video/mp4",
-            resumable=True,
-        )
-
-        file = self.service.files().create(
-            body=file_metadata,
-            media_body=media,
-            fields="id, webViewLink",
-        ).execute()
-
-        file_id = file.get("id")
-        link = file.get("webViewLink", f"https://drive.google.com/file/d/{file_id}")
-        print(f"  ✅ Uploaded to Google Drive: {link}")
-        return link
-
-
-# ─── YouTube Uploader ──────────────────────────────────────────────
-
-class YouTubeUploader:
-    """Upload videos to YouTube as Shorts."""
-
-    SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
-
-    def __init__(self, config_path: str = "config.yaml"):
-        with open(config_path) as f:
-            self.config = yaml.safe_load(f)
-
-        self.yt_config = self.config["upload"]["youtube"]
-        self.service = self._authenticate()
-
-    def _authenticate(self):
-        """Authenticate with YouTube API."""
-        client_secret_path = os.environ.get(
-            "YOUTUBE_CLIENT_SECRET_PATH",
-            "credentials/youtube_client_secret.json",
-        )
-        token_path = os.environ.get(
-            "YOUTUBE_TOKEN_PATH",
-            "credentials/youtube_token.json",
-        )
-
-        creds = None
-        if os.path.exists(token_path):
-            creds = Credentials.from_authorized_user_file(token_path, self.SCOPES)
-
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    client_secret_path, self.SCOPES
-                )
-                creds = flow.run_local_server(port=0)
-            with open(token_path, "w") as f:
-                f.write(creds.to_json())
-
-        return build("youtube", "v3", credentials=creds)
-
-    def upload(
-        self,
-        file_path: str,
-        title: str,
-        description: str,
-        tags: list[str],
-        privacy: str = "public",
-    ) -> str:
-        """Upload video to YouTube."""
-        # Add #Shorts to title for YouTube Shorts detection
-        if "#Shorts" not in title:
-            title = f"{title} #Shorts"
-
-        # Ensure title is under 100 chars
-        if len(title) > 100:
-            title = title[:97] + "..."
-
-        body = {
-            "snippet": {
-                "title": title,
-                "description": description,
-                "tags": tags + self.yt_config.get("default_tags", []),
-                "categoryId": self.yt_config.get("category", "28"),
-                "defaultLanguage": "uk",
-                "defaultAudioLanguage": "uk",
-            },
-            "status": {
-                "privacyStatus": privacy or self.yt_config.get("privacy", "public"),
-                "selfDeclaredMadeForKids": False,
-                "shortDescription": description[:500],
-            },
-        }
-
-        media = MediaFileUpload(
-            file_path,
-            mimetype="video/mp4",
-            resumable=True,
-            chunksize=10 * 1024 * 1024,  # 10MB chunks
-        )
-
-        request = self.service.videos().insert(
-            part=",".join(body.keys()),
-            body=body,
-            media_body=media,
-        )
-
-        response = None
-        while response is None:
-            status, response = request.next_chunk()
-            if status:
-                print(f"  📤 YouTube upload: {int(status.progress() * 100)}%")
-
-        video_id = response["id"]
-        url = f"https://youtube.com/shorts/{video_id}"
-        print(f"  ✅ Uploaded to YouTube: {url}")
-        return url
-
-
-# ─── TikTok Uploader ──────────────────────────────────────────────
-
-class TikTokUploader:
-    """Upload videos to TikTok using Content Posting API."""
-
-    BASE_URL = "https://open.tiktokapis.com/v2"
-
-    def __init__(self, config_path: str = "config.yaml"):
-        with open(config_path) as f:
-            self.config = yaml.safe_load(f)
-
-        self.access_token = os.environ.get("TIKTOK_ACCESS_TOKEN", "")
-        self.tt_config = self.config["upload"]["tiktok"]
-
-    def _headers(self):
+    def _headers(self) -> dict:
         return {
-            "Authorization": f"Bearer {self.access_token}",
+            "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
 
-    def upload(
-        self,
-        file_path: str,
-        title: str,
-        description: str = "",
-        hashtags: list[str] = None,
-    ) -> str:
-        """Upload video to TikTok using Content Posting API v2."""
-        if not self.access_token:
-            print("  ⚠️  TikTok: No access token, skipping upload")
-            return ""
+    def _request(self, method: str, endpoint: str, **kwargs) -> dict:
+        """Make an API request with error handling."""
+        url = f"{self.BASE_URL}{endpoint}"
+        resp = requests.request(method, url, headers=self._headers(), **kwargs)
 
-        file_size = os.path.getsize(file_path)
+        if resp.status_code >= 400:
+            raise Exception(
+                f"Post-Bridge API error {resp.status_code}: {resp.text}"
+            )
 
-        # Step 1: Initialize upload
-        init_body = {
-            "post_info": {
-                "title": title[:150],
-                "privacy_level": self.tt_config.get(
-                    "privacy_level", "PUBLIC_TO_EVERYONE"
-                ),
-                "disable_duet": False,
-                "disable_comment": False,
-                "disable_stitch": False,
-            },
-            "source_info": {
-                "source": "FILE_UPLOAD",
-                "video_size": file_size,
-                "chunk_size": min(file_size, 10 * 1024 * 1024),
-                "total_chunk_count": max(1, file_size // (10 * 1024 * 1024) + 1),
-            },
+        return resp.json() if resp.text else {}
+
+    # --- Social Accounts ---
+
+    def list_accounts(self, platform: str = None) -> list[dict]:
+        """List connected social media accounts."""
+        params = {}
+        if platform:
+            params["platform"] = platform
+        data = self._request("GET", "/social-accounts", params=params)
+        return data.get("data", [])
+
+    def get_account(self, account_id: int) -> dict:
+        """Get a specific social account."""
+        return self._request("GET", f"/social-accounts/{account_id}")
+
+    # --- Media Upload ---
+
+    def upload_media(self, file_path: str) -> str:
+        """Upload a media file and return the media_id.
+
+        Two-step process:
+        1. Request a signed upload URL from Post-Bridge
+        2. Upload the binary file to that URL
+        """
+        path = Path(file_path)
+        file_size = path.stat().st_size
+
+        # Determine MIME type
+        mime_map = {
+            ".mp4": "video/mp4",
+            ".mov": "video/quicktime",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".png": "image/png",
         }
+        mime_type = mime_map.get(path.suffix.lower(), "video/mp4")
 
-        resp = requests.post(
-            f"{self.BASE_URL}/post/publish/inbox/video/init/",
-            headers=self._headers(),
-            json=init_body,
-        )
+        # Step 1: Get upload URL
+        upload_data = self._request("POST", "/media/create-upload-url", json={
+            "name": path.name,
+            "mime_type": mime_type,
+            "size_bytes": file_size,
+        })
 
-        if resp.status_code != 200:
-            print(f"  ❌ TikTok init failed: {resp.status_code} {resp.text}")
-            return ""
+        media_id = upload_data.get("media_id") or upload_data.get("data", {}).get("media_id")
+        upload_url = upload_data.get("upload_url") or upload_data.get("data", {}).get("upload_url")
 
-        data = resp.json().get("data", {})
-        publish_id = data.get("publish_id", "")
-        upload_url = data.get("upload_url", "")
+        if not media_id or not upload_url:
+            raise Exception(f"Post-Bridge: Failed to get upload URL. Response: {upload_data}")
 
-        if not upload_url:
-            print(f"  ❌ TikTok: No upload URL received")
-            return ""
-
-        # Step 2: Upload video file
+        # Step 2: Upload binary file
         with open(file_path, "rb") as f:
             upload_resp = requests.put(
                 upload_url,
-                headers={
-                    "Content-Type": "video/mp4",
-                    "Content-Range": f"bytes 0-{file_size - 1}/{file_size}",
-                },
+                headers={"Content-Type": mime_type},
                 data=f,
             )
 
-        if upload_resp.status_code not in (200, 201):
-            print(f"  ❌ TikTok upload failed: {upload_resp.status_code}")
-            return ""
-
-        # Step 3: Check publish status
-        for attempt in range(10):
-            time.sleep(5)
-            status_resp = requests.post(
-                f"{self.BASE_URL}/post/publish/status/fetch/",
-                headers=self._headers(),
-                json={"publish_id": publish_id},
+        if upload_resp.status_code >= 400:
+            raise Exception(
+                f"Post-Bridge: File upload failed ({upload_resp.status_code}): {upload_resp.text}"
             )
-            status_data = status_resp.json().get("data", {})
-            status = status_data.get("status", "")
 
-            if status == "PUBLISH_COMPLETE":
-                video_id = status_data.get("publicaly_available_post_id", [""])[0]
-                url = f"https://www.tiktok.com/@homedomeua/video/{video_id}"
-                print(f"  ✅ Published to TikTok: {url}")
-                return url
-            elif status in ("FAILED", "PUBLISH_FAILED"):
-                print(f"  ❌ TikTok publish failed: {status_data}")
-                return ""
+        print(f"  📦 Media uploaded: {media_id} ({file_size / 1024 / 1024:.1f} MB)")
+        return media_id
 
-            print(f"  ⏳ TikTok publish status: {status} (attempt {attempt+1}/10)")
+    # --- Posts ---
 
-        print("  ⚠️  TikTok: Publish timed out")
-        return publish_id  # Return publish_id for manual check
+    def create_post(
+        self,
+        caption: str,
+        account_ids: list[int],
+        media_ids: list[str] = None,
+        scheduled_at: str = None,
+        platform_configs: dict = None,
+    ) -> dict:
+        """Create a post (instant or scheduled).
+
+        Args:
+            caption: Post text/description
+            account_ids: List of social account IDs to post to
+            media_ids: List of media_id strings from upload_media()
+            scheduled_at: ISO-8601 datetime for scheduled posting, or None for instant
+            platform_configs: Platform-specific overrides (tiktok, youtube, etc.)
+        """
+        body = {
+            "caption": caption,
+            "social_accounts": account_ids,
+            "is_draft": False,
+        }
+
+        if media_ids:
+            body["media"] = media_ids
+
+        if scheduled_at:
+            body["scheduled_at"] = scheduled_at
+
+        if platform_configs:
+            body["platform_configurations"] = platform_configs
+
+        return self._request("POST", "/posts", json=body)
+
+    def get_post(self, post_id: int) -> dict:
+        """Get post details including publish status."""
+        return self._request("GET", f"/posts/{post_id}")
+
+    def list_post_results(self, post_id: int = None) -> list[dict]:
+        """Get publishing results for a post."""
+        params = {}
+        if post_id:
+            params["post_id"] = post_id
+        data = self._request("GET", "/post-results", params=params)
+        return data.get("data", [])
+
+    # --- Analytics ---
+
+    def get_analytics(self, timeframe: str = "7d") -> list[dict]:
+        """Get analytics across all posts."""
+        data = self._request("GET", "/analytics", params={"timeframe": timeframe})
+        return data.get("data", [])
+
+    def sync_analytics(self, platform: str = None) -> dict:
+        """Trigger analytics sync."""
+        body = {}
+        if platform:
+            body["platform"] = platform
+        return self._request("POST", "/analytics/sync", json=body)
 
 
-# ─── Unified Uploader ─────────────────────────────────────────────
+# ─── Content Uploader (High-Level) ──────────────────────────────
 
 class ContentUploader:
-    """Unified uploader that handles all platforms."""
+    """High-level uploader that publishes to TikTok + YouTube via Post-Bridge.
 
-    def __init__(self, config_path: str = "config.yaml"):
-        with open(config_path) as f:
-            self.config = yaml.safe_load(f)
+    Supports multi-brand: each brand can specify its own Post-Bridge account IDs,
+    or auto-detect from connected accounts by platform.
+    """
 
-        self.config_path = config_path
-        self.results = {}
+    def __init__(self, brand_config: BrandConfig):
+        self.config = brand_config.config
+        self.bc = brand_config
+        self.client = PostBridgeClient()
+        self._accounts_cache = None
+
+    def _get_accounts(self) -> list[dict]:
+        """Get and cache connected accounts."""
+        if self._accounts_cache is None:
+            self._accounts_cache = self.client.list_accounts()
+            if not self._accounts_cache:
+                print("  ⚠️  No social accounts connected in Post-Bridge!")
+                print("     Connect accounts at: https://www.post-bridge.com/onboarding/connect")
+        return self._accounts_cache
+
+    def _find_account_ids(self, platforms: list[str]) -> list[int]:
+        """Find account IDs for specified platforms."""
+        accounts = self._get_accounts()
+        ids = []
+        for acc in accounts:
+            if acc.get("platform") in platforms:
+                ids.append(acc["id"])
+                print(f"  📱 Found {acc['platform']} account: @{acc.get('username', '?')}")
+        return ids
 
     def upload_all(
         self,
@@ -324,56 +220,144 @@ class ContentUploader:
         description: str,
         tags: list[str],
         hashtags: list[str],
+        scheduled_at: str = None,
     ) -> dict:
-        """Upload video to all enabled platforms."""
-        upload_config = self.config["upload"]
+        """Upload video to all enabled platforms via Post-Bridge.
 
-        # Google Drive
-        if upload_config.get("google_drive", {}).get("enabled", False):
-            try:
-                gdrive = GoogleDriveUploader(self.config_path)
-                filename = f"{title.replace(' ', '_')[:50]}.mp4"
-                self.results["google_drive"] = gdrive.upload(video_path, filename)
-            except Exception as e:
-                print(f"  ❌ Google Drive failed: {e}")
-                self.results["google_drive"] = f"ERROR: {e}"
+        Returns dict with post_id and per-platform results.
+        """
+        results = {}
+        upload_config = self.config.get("upload", {})
 
-        # YouTube
-        if upload_config.get("youtube", {}).get("enabled", False):
-            try:
-                yt = YouTubeUploader(self.config_path)
-                # Build YouTube description with hashtags
-                yt_desc = f"{description}\n\n{' '.join(hashtags)}\n\n🔋 homedome.com.ua"
-                self.results["youtube"] = yt.upload(
-                    file_path=video_path,
-                    title=title,
-                    description=yt_desc,
-                    tags=tags,
-                )
-            except Exception as e:
-                print(f"  ❌ YouTube failed: {e}")
-                self.results["youtube"] = f"ERROR: {e}"
-
-        # TikTok
+        # Determine which platforms to post to
+        target_platforms = []
         if upload_config.get("tiktok", {}).get("enabled", False):
-            try:
-                tt = TikTokUploader(self.config_path)
-                # TikTok title includes hashtags
-                tt_title = f"{title} {' '.join(hashtags[:5])}"
-                self.results["tiktok"] = tt.upload(
-                    file_path=video_path,
-                    title=tt_title,
-                    description=description,
-                    hashtags=hashtags,
-                )
-            except Exception as e:
-                print(f"  ❌ TikTok failed: {e}")
-                self.results["tiktok"] = f"ERROR: {e}"
+            target_platforms.append("tiktok")
+        if upload_config.get("youtube", {}).get("enabled", False):
+            target_platforms.append("youtube")
 
-        return self.results
+        if not target_platforms:
+            print("  ⚠️  No platforms enabled in config")
+            return results
 
+        # Use brand-specific account IDs if configured, otherwise auto-detect
+        brand_account_ids = self.bc.post_bridge_accounts
+        if brand_account_ids:
+            account_ids = brand_account_ids
+            print(f"  📱 Using brand-specific accounts: {account_ids}")
+        else:
+            account_ids = self._find_account_ids(target_platforms)
+
+        if not account_ids:
+            print("  ❌ No matching accounts found in Post-Bridge")
+            print(f"     Looking for: {', '.join(target_platforms)}")
+            print("     Connect accounts at: https://www.post-bridge.com/onboarding/connect")
+            return results
+
+        # Step 1: Upload video file
+        print(f"\n  📤 Uploading video to Post-Bridge...")
+        try:
+            media_id = self.client.upload_media(video_path)
+            results["media_id"] = media_id
+        except Exception as e:
+            print(f"  ❌ Media upload failed: {e}")
+            results["error"] = str(e)
+            return results
+
+        # Step 2: Build caption with hashtags
+        hashtag_str = " ".join(hashtags[:8])
+        caption = f"{description}\n\n{hashtag_str}\n\n🔋 homedome.com.ua"
+
+        # Step 3: Build platform-specific configurations
+        platform_configs = {}
+
+        if "tiktok" in target_platforms:
+            tt_title = f"{title} {' '.join(hashtags[:5])}"
+            platform_configs["tiktok"] = {
+                "caption": caption,
+                "media": [media_id],
+                "title": tt_title[:150],
+            }
+
+        if "youtube" in target_platforms:
+            yt_title = title
+            if "#Shorts" not in yt_title:
+                yt_title = f"{yt_title} #Shorts"
+            if len(yt_title) > 100:
+                yt_title = yt_title[:97] + "..."
+
+            yt_caption = f"{description}\n\n{hashtag_str}\n\n🔋 Деталі: homedome.com.ua"
+            platform_configs["youtube"] = {
+                "caption": yt_caption,
+                "media": [media_id],
+                "title": yt_title,
+            }
+
+        # Step 4: Create the post
+        print(f"  📝 Creating post for: {', '.join(target_platforms)}...")
+        try:
+            post_data = self.client.create_post(
+                caption=caption,
+                account_ids=account_ids,
+                media_ids=[media_id],
+                scheduled_at=scheduled_at,
+                platform_configs=platform_configs,
+            )
+
+            post_id = post_data.get("id") or post_data.get("data", {}).get("id")
+            results["post_id"] = post_id
+            results["status"] = "scheduled" if scheduled_at else "published"
+
+            if scheduled_at:
+                print(f"  📅 Post scheduled for: {scheduled_at}")
+            else:
+                print(f"  ✅ Post published! (ID: {post_id})")
+
+            # Wait a moment and check results
+            if not scheduled_at and post_id:
+                time.sleep(3)
+                try:
+                    post_results = self.client.list_post_results(post_id)
+                    for pr in post_results:
+                        platform = pr.get("platform", "unknown")
+                        status = pr.get("status", "unknown")
+                        url = pr.get("url", "")
+                        results[platform] = {
+                            "status": status,
+                            "url": url,
+                        }
+                        if url:
+                            print(f"  🔗 {platform}: {url}")
+                        else:
+                            print(f"  📊 {platform}: {status}")
+                except Exception as e:
+                    print(f"  ⚠️  Could not fetch post results: {e}")
+
+        except Exception as e:
+            print(f"  ❌ Post creation failed: {e}")
+            results["error"] = str(e)
+
+        return results
+
+
+# ─── CLI ─────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     from dotenv import load_dotenv
     load_dotenv()
-    print("Upload module loaded. Configure credentials and use generate.py to run.")
+
+    print("🔌 Post-Bridge Upload Module")
+    print("=" * 40)
+
+    try:
+        client = PostBridgeClient()
+        accounts = client.list_accounts()
+        print(f"\n📱 Connected accounts ({len(accounts)}):")
+        for acc in accounts:
+            print(f"  • {acc.get('platform', '?')} — @{acc.get('username', '?')} (ID: {acc.get('id')})")
+
+        if not accounts:
+            print("  No accounts connected!")
+            print("  → Connect at: https://www.post-bridge.com/onboarding/connect")
+    except Exception as e:
+        print(f"❌ Error: {e}")

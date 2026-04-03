@@ -1,30 +1,31 @@
 """
-HomeDome Content Engine — Image Generator
+Content Engine — Image Generator
 Generates background images for slides using Google Gemini/Imagen.
+Multi-brand: uses shared API config.
 """
 
 import base64
 import os
-import yaml
 from pathlib import Path
 from typing import Optional
 
 import google.generativeai as genai
 
+from src.brand import BrandConfig
+
 
 class ImageGenerator:
     """Generates images using Google Gemini AI."""
 
-    def __init__(self, config_path: str = "config.yaml"):
-        with open(config_path) as f:
-            self.config = yaml.safe_load(f)
+    def __init__(self, brand_config: BrandConfig):
+        self.config = brand_config.config
+        self.img_config = self.config["image_generation"]
 
         api_key = os.environ.get("GOOGLE_API_KEY")
         if not api_key:
             raise ValueError("GOOGLE_API_KEY environment variable not set")
 
         genai.configure(api_key=api_key)
-        self.img_config = self.config["image_generation"]
 
     def generate_image(
         self,
@@ -37,7 +38,6 @@ class ImageGenerator:
         width = self.img_config.get("width", 1080)
         height = self.img_config.get("height", 1920)
 
-        # Enhanced prompt with style and format guidance
         full_prompt = (
             f"{prompt}. "
             f"Style: {style}, cinematic lighting, high quality, "
@@ -46,7 +46,6 @@ class ImageGenerator:
             f"No text, no watermarks, no logos."
         )
 
-        # Try Imagen 3 first, fall back to Gemini with image generation
         try:
             return self._generate_with_imagen(full_prompt, output_path)
         except Exception as e:
@@ -82,7 +81,6 @@ class ImageGenerator:
             ),
         )
 
-        # Extract image from response
         for part in response.candidates[0].content.parts:
             if hasattr(part, "inline_data") and part.inline_data:
                 img_data = part.inline_data.data
@@ -115,7 +113,6 @@ class ImageGenerator:
                 print(f"  ✅ Slide {slide.slide_number} background generated")
             except Exception as e:
                 print(f"  ❌ Slide {slide.slide_number} failed: {e}")
-                # Generate a fallback solid-color image
                 path = self._create_fallback_image(output_path)
                 paths.append(path)
         return paths
@@ -130,7 +127,6 @@ class ImageGenerator:
         img = Image.new("RGB", (width, height))
         draw = ImageDraw.Draw(img)
 
-        # Dark gradient (top-to-bottom)
         for y in range(height):
             r = int(18 + (y / height) * 10)
             g = int(40 + (y / height) * 20)
@@ -146,7 +142,8 @@ if __name__ == "__main__":
     from dotenv import load_dotenv
     load_dotenv()
 
-    gen = ImageGenerator()
+    bc = BrandConfig()
+    gen = ImageGenerator(bc)
     gen.generate_image(
         prompt="Modern home with solar panels on rooftop, Ukrainian suburban setting, golden hour",
         output_path="output/test_image.png",
