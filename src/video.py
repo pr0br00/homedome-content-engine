@@ -87,7 +87,7 @@ class VideoAssembler:
 
         return output_path
 
-    def _generate_ass(self, slides, audio_paths):
+    def _generate_ass(self, slides, audio_paths, word_timings=None):
         """Generate ASS subtitle file with keyword highlighting.
 
         Uses yellow (#FFFF00) as the main subtitle color.
@@ -134,39 +134,45 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
         current_time = 0.0
+        slide_timings = word_timings if word_timings else [None] * len(slides)
 
-        for slide, audio_path in zip(slides, audio_paths):
+        for idx, (slide, audio_path) in enumerate(zip(slides, audio_paths)):
             if not audio_path or not os.path.exists(audio_path):
                 continue
 
             duration = self.get_audio_duration(audio_path) + 0.3
-            text = slide.tts_script
             keywords = getattr(slide, 'keywords', []) or []
+            timings = slide_timings[idx] if idx < len(slide_timings) else None
 
-            if self.sub_config.get("style") == "word_highlight":
+            if timings and len(timings) > 0:
+                # Use real word-level timestamps from ElevenLabs
+                chunk_size = 3
+                for i in range(0, len(timings), chunk_size):
+                    chunk_words = timings[i:i + chunk_size]
+                    chunk_text = " ".join(w.word for w in chunk_words)
+                    chunk_start = current_time + chunk_words[0].start
+                    chunk_end = current_time + chunk_words[-1].end + 0.05
+                    start = self._format_ass_time(chunk_start)
+                    end = self._format_ass_time(chunk_end)
+                    styled = self._highlight_keywords(chunk_text, keywords, ass_highlight)
+                    ass_content += f"Dialogue: 0,{start},{end},Default,,0,0,0,,{styled}\n"
+                current_time += duration
+            else:
+                # Fallback: equal timing distribution
+                text = slide.tts_script
                 words = text.split()
                 chunk_size = 3
-                chunks = [
-                    " ".join(words[i:i + chunk_size])
-                    for i in range(0, len(words), chunk_size)
-                ]
-
+                chunks = [" ".join(words[i:i + chunk_size]) for i in range(0, len(words), chunk_size)]
                 if chunks:
                     chunk_duration = duration / len(chunks)
                     for chunk in chunks:
                         start = self._format_ass_time(current_time)
                         end = self._format_ass_time(current_time + chunk_duration)
-                        styled_chunk = self._highlight_keywords(chunk, keywords, ass_highlight)
-                        ass_content += f"Dialogue: 0,{start},{end},Default,,0,0,0,,{styled_chunk}\n"
+                        styled = self._highlight_keywords(chunk, keywords, ass_highlight)
+                        ass_content += f"Dialogue: 0,{start},{end},Default,,0,0,0,,{styled}\n"
                         current_time += chunk_duration
                 else:
                     current_time += duration
-            else:
-                start = self._format_ass_time(current_time)
-                end = self._format_ass_time(current_time + duration)
-                styled_text = self._highlight_keywords(text, keywords, ass_highlight)
-                ass_content += f"Dialogue: 0,{start},{end},Default,,0,0,0,,{styled_text}\n"
-                current_time += duration
 
         return ass_content
 
@@ -227,7 +233,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         millis = int((seconds % 1) * 1000)
         return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
-    def assemble_video(self, slide_paths, audio_paths, slides, output_path, add_subtitles=True):
+    def assemble_video(self, slide_paths, audio_paths, slides, output_path, add_subtitles=True, word_timings=None):
         """Assemble final video from slides + audio."""
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
@@ -263,7 +269,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
             if add_subtitles and self.sub_config.get("enabled", True):
                 ass_path = os.path.join(tmpdir, "subtitles.ass")
-                ass_content = self._generate_ass(slides, audio_paths)
+                ass_content = self._generate_ass(slides, audio_paths, word_timings=word_timings)
                 with open(ass_path, "w", encoding="utf-8") as f:
                     f.write(ass_content)
 

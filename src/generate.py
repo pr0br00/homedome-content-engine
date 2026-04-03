@@ -145,12 +145,13 @@ class ContentEngine:
         )
         result["slides"] = slide_paths
 
-        # ─── Step 4: Generate TTS Audio ───
+        # ─── Step 4: Generate TTS Audio (with word timestamps) ───
         print("\n  🗣️  STEP 4: Generating TTS audio...")
         tts = TTSGenerator(self.bc)
-        audio_paths = tts.generate_slide_audio(
+        audio_paths, word_timings = tts.generate_slide_audio(
             slides=scenario.slides, output_dir=video_dir,
         )
+        tts.save_timings(word_timings, video_dir)
         result["audio"] = audio_paths
 
         # ─── Step 5: Assemble Video ───
@@ -161,6 +162,7 @@ class ContentEngine:
         assembler.assemble_video(
             slide_paths=slide_paths, audio_paths=audio_paths,
             slides=scenario.slides, output_path=video_path,
+            word_timings=word_timings,
         )
         result["video_path"] = video_path
 
@@ -226,6 +228,16 @@ def main():
         action="store_true",
         help="List available brand profiles and exit",
     )
+    parser.add_argument(
+        "--scenarios-only",
+        action="store_true",
+        help="Generate scenarios and save to disk, skip media generation",
+    )
+    parser.add_argument(
+        "--from-scenario",
+        type=str, default=None,
+        help="Generate video from a pre-made scenario.json file",
+    )
 
     args = parser.parse_args()
     load_dotenv()
@@ -250,6 +262,36 @@ def main():
         sys.exit(1)
 
     engine = ContentEngine(brand_config=bc)
+
+    # Scenarios-only mode: generate and save scenarios, skip media
+    if args.scenarios_only:
+        scenario_gen = ScenarioGenerator(bc)
+        scenarios = scenario_gen.generate(count=args.count, pillar_id=args.pillar)
+        print(f"\n📝 Generated {len(scenarios)} scenario(s):")
+        for s in scenarios:
+            path = scenario_gen.save_scenario(s, engine.output_base)
+            print(f"  💾 [{s.pillar}] {s.title} → {path}")
+        return
+
+    # From-scenario mode: build video from existing scenario.json
+    if args.from_scenario:
+        scenario_path = Path(args.from_scenario)
+        if not scenario_path.exists():
+            print(f"❌ Scenario file not found: {scenario_path}")
+            sys.exit(1)
+        raw = json.loads(scenario_path.read_text(encoding="utf-8"))
+        scenario = Scenario(**raw)
+        video_dir = str(scenario_path.parent)
+        print(f"\n📹 Building video from scenario: {scenario.title}")
+        result = engine._process_video(scenario, video_dir, args.no_upload)
+        report_path = Path(video_dir) / "build_result.json"
+        report_path.write_text(json.dumps(result, indent=2, ensure_ascii=False))
+        print(f"\n{'='*50}")
+        print(f"📊 Result: {report_path}")
+        if result.get("status") == "failed":
+            sys.exit(1)
+        return
+
     results = engine.run_pipeline(
         count=args.count,
         pillar_id=args.pillar,
