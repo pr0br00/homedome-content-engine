@@ -1,0 +1,31 @@
+# HomeDome Content Engine - Dependencies
+# Core
+google-generativeai>=0.8.0
+elevenlabs>=1.0.0
+Pillow>=10.0.0
+pydantic>=2.0.0
+pyyaml>=6.0
+python-dotenv>=1.0.0
+
+# Google Drive upload
+google-api-python-client>=2.100.0
+google-auth-httplib2>=0.2.0
+google-auth-oauthlib>=1.2.0
+
+# YouTube upload
+google-auth>=2.23.0
+
+# TikTok upload
+requests>=2.31.0
+requests-toolbelt>=1.0.0
+
+# Video processing
+mutagen>=1.47.0
+
+# Subtitles
+pysrt>=1.1.2
+
+# Utilities
+Jinja2>=3.1.0
+click>=8.1.0
+rich>=13.0.0

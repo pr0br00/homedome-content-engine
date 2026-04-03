@@ -1,0 +1,154 @@
+"""
+HomeDome Content Engine — Image Generator
+Generates background images for slides using Google Gemini/Imagen.
+"""
+
+import base64
+import os
+import yaml
+from pathlib import Path
+from typing import Optional
+
+import google.generativeai as genai
+
+
+class ImageGenerator:
+    """Generates images using Google Gemini AI."""
+
+    def __init__(self, config_path: str = "config.yaml"):
+        with open(config_path) as f:
+            self.config = yaml.safe_load(f)
+
+        api_key = os.environ.get("GOOGLE_API_KEY")
+        if not api_key:
+            raise ValueError("GOOGLE_API_KEY environment variable not set")
+
+        genai.configure(api_key=api_key)
+        self.img_config = self.config["image_generation"]
+
+    def generate_image(
+        self,
+        prompt: str,
+        output_path: str,
+        style: Optional[str] = None,
+    ) -> str:
+        """Generate a single image from prompt and save to file."""
+        style = style or self.img_config.get("style", "photorealistic")
+        width = self.img_config.get("width", 1080)
+        height = self.img_config.get("height", 1920)
+
+        # Enhanced prompt with style and format guidance
+        full_prompt = (
+            f"{prompt}. "
+            f"Style: {style}, cinematic lighting, high quality, "
+            f"vertical orientation {width}x{height}, "
+            f"vibrant colors, professional photography look. "
+            f"No text, no watermarks, no logos."
+        )
+
+        # Try Imagen 3 first, fall back to Gemini with image generation
+        try:
+            return self._generate_with_imagen(full_prompt, output_path)
+        except Exception as e:
+            print(f"⚠️  Imagen failed ({e}), falling back to Gemini...")
+            return self._generate_with_gemini(full_prompt, output_path)
+
+    def _generate_with_imagen(self, prompt: str, output_path: str) -> str:
+        """Generate image using Imagen 3 model."""
+        imagen = genai.ImageGenerationModel("imagen-3.0-generate-001")
+        result = imagen.generate_images(
+            prompt=prompt,
+            number_of_images=1,
+            safety_filter_level="block_only_high",
+            person_generation="dont_allow",
+            aspect_ratio="9:16",
+        )
+
+        if result.images:
+            img_data = result.images[0]._image_bytes
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            with open(output_path, "wb") as f:
+                f.write(img_data)
+            return output_path
+        raise RuntimeError("Imagen returned no images")
+
+    def _generate_with_gemini(self, prompt: str, output_path: str) -> str:
+        """Generate image using Gemini model with image generation capability."""
+        model = genai.GenerativeModel("gemini-2.0-flash-exp")
+        response = model.generate_content(
+            f"Generate an image: {prompt}",
+            generation_config=genai.GenerationConfig(
+                response_modalities=["image", "text"],
+            ),
+        )
+
+        # Extract image from response
+        for part in response.candidates[0].content.parts:
+            if hasattr(part, "inline_data") and part.inline_data:
+                img_data = part.inline_data.data
+                if isinstance(img_data, str):
+                    img_data = base64.b64decode(img_data)
+
+                Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+                with open(output_path, "wb") as f:
+                    f.write(img_data)
+                return output_path
+
+        raise RuntimeError("Gemini returned no image data")
+
+    def generate_slide_backgrounds(
+        self,
+        slides: list,
+        output_dir: str,
+    ) -> list[str]:
+        """Generate background images for all slides in a scenario."""
+        paths = []
+        for slide in slides:
+            filename = f"bg_slide_{slide.slide_number:02d}.png"
+            output_path = str(Path(output_dir) / filename)
+            try:
+                path = self.generate_image(
+                    prompt=slide.image_prompt,
+                    output_path=output_path,
+                )
+                paths.append(path)
+                print(f"  ✅ Slide {slide.slide_number} background generated")
+            except Exception as e:
+                print(f"  ❌ Slide {slide.slide_number} failed: {e}")
+                # Generate a fallback solid-color image
+                path = self._create_fallback_image(output_path)
+                paths.append(path)
+        return paths
+
+    def _create_fallback_image(self, output_path: str) -> str:
+        """Create a gradient fallback image if generation fails."""
+        from PIL import Image, ImageDraw
+
+        width = self.img_config.get("width", 1080)
+        height = self.img_config.get("height", 1920)
+
+        img = Image.new("RGB", (width, height))
+        draw = ImageDraw.Draw(img)
+
+        # Dark gradient (top-to-bottom)
+        for y in range(height):
+            r = int(18 + (y / height) * 10)
+            g = int(40 + (y / height) * 20)
+            b = int(18 + (y / height) * 10)
+            draw.line([(0, y), (width, y)], fill=(r, g, b))
+
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        img.save(output_path, "PNG")
+        return output_path
+
+
+if __name__ == "__main__":
+    from dotenv import load_dotenv
+    load_dotenv()
+
+    gen = ImageGenerator()
+    gen.generate_image(
+        prompt="Modern home with solar panels on rooftop, Ukrainian suburban setting, golden hour",
+        output_path="output/test_image.png",
+    )
+    print("✅ Test image generated")

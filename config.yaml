@@ -1,0 +1,131 @@
+# ===== HomeDome Content Engine Configuration =====
+
+brand:
+  name: "HomeDome"
+  domain: "homedome.com.ua"
+  tagline: "Енергонезалежність для кожного"
+  colors:
+    primary: "#1B5E20"      # Dark green
+    secondary: "#FFC107"    # Amber/gold
+    accent: "#2196F3"       # Blue
+    dark: "#121212"
+    light: "#FFFFFF"
+  logo_path: "assets/logo.png"
+
+video:
+  width: 1080
+  height: 1920
+  fps: 30
+  format: "mp4"
+  codec: "libx264"
+  audio_codec: "aac"
+
+slides:
+  # Design presets (rotated randomly for variety)
+  presets:
+    - name: "gradient_dark"
+      overlay_opacity: 0.65
+      text_color: "#FFFFFF"
+      accent_color: "#FFC107"
+      font_size_title: 72
+      font_size_body: 54
+      font_size_hook: 84
+    - name: "clean_light"
+      overlay_opacity: 0.75
+      text_color: "#FFFFFF"
+      accent_color: "#4CAF50"
+      font_size_title: 68
+      font_size_body: 52
+      font_size_hook: 80
+    - name: "bold_contrast"
+      overlay_opacity: 0.70
+      text_color: "#FFFFFF"
+      accent_color: "#FF5722"
+      font_size_title: 76
+      font_size_body: 56
+      font_size_hook: 88
+
+subtitles:
+  enabled: true
+  style: "word_highlight"  # word_highlight | karaoke | static
+  font_size: 48
+  color: "#FFFFFF"
+  highlight_color: "#FFC107"
+  background_color: "#000000AA"
+  position: "bottom"  # bottom | center
+  margin_bottom: 200
+
+tts:
+  provider: "elevenlabs"
+  voice_id: "JBFqnCBsd6RMkjVDRZzb"  # George
+  model: "eleven_multilingual_v2"
+  stability: 0.5
+  similarity_boost: 0.75
+  speed: 1.0
+
+image_generation:
+  provider: "gemini"
+  model: "gemini-2.0-flash-exp"  # or imagen-3.0-generate-001
+  style: "photorealistic"
+  width: 1080
+  height: 1920
+
+scenario:
+  provider: "gemini"
+  model: "gemini-2.0-flash"
+  language: "uk"  # Ukrainian
+  slides_count: 5  # 4-6 slides per video
+  max_words_per_slide: 15
+
+  # Content pillars (rotated for variety)
+  pillars:
+    - id: "fear_hook"
+      name: "Страх/Проблема"
+      description: "Відключення світла, аварії, проблеми без ІБП"
+      weight: 3
+    - id: "education"
+      name: "Освітній"
+      description: "Як працює сонячна станція, ESS, ІБП — просто і зрозуміло"
+      weight: 3
+    - id: "comparison"
+      name: "Порівняння"
+      description: "ІБП vs генератор, різні типи батарей, бренди"
+      weight: 2
+    - id: "case_study"
+      name: "Кейс/Результат"
+      description: "Реальні клієнти, встановлення, цифри економії"
+      weight: 2
+    - id: "myth_bust"
+      name: "Розвінчання міфів"
+      description: "Популярні помилки про сонячні панелі, ІБП, ESS"
+      weight: 2
+    - id: "news_trend"
+      name: "Новини/Тренди"
+      description: "Зелений тариф, нові закони, тренди ринку енергетики"
+      weight: 1
+
+upload:
+  google_drive:
+    enabled: true
+    folder_id: "${GOOGLE_DRIVE_FOLDER_ID}"
+  youtube:
+    enabled: true
+    privacy: "public"
+    category: "28"  # Science & Technology
+    default_tags:
+      - "ІБП"
+      - "сонячні панелі"
+      - "ESS"
+      - "HomeDome"
+      - "енергонезалежність"
+      - "сонячна станція"
+      - "безперебійник"
+      - "автономне живлення"
+  tiktok:
+    enabled: true
+    privacy_level: "PUBLIC_TO_EVERYONE"
+
+# Content queue
+queue:
+  videos_per_batch: 3  # Generate 3 videos per run
+  schedule: "daily"     # daily | weekly

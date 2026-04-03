@@ -1,0 +1,130 @@
+name: "🎬 HomeDome Content Generator"
+
+on:
+  # Run daily at 8:00 AM Kyiv time (5:00 UTC in summer, 6:00 UTC in winter)
+  schedule:
+    - cron: "0 5 * * *"
+
+  # Manual trigger with options
+  workflow_dispatch:
+    inputs:
+      count:
+        description: "Number of videos to generate"
+        required: false
+        default: "1"
+        type: choice
+        options: ["1", "2", "3", "5"]
+      pillar:
+        description: "Content pillar (leave empty for random)"
+        required: false
+        default: ""
+        type: choice
+        options:
+          - ""
+          - "fear_hook"
+          - "education"
+          - "comparison"
+          - "case_study"
+          - "myth_bust"
+          - "news_trend"
+      skip_upload:
+        description: "Skip upload (generate only)"
+        required: false
+        default: false
+        type: boolean
+      dry_run:
+        description: "Dry run (scenario only, no media)"
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  generate:
+    name: "🎬 Generate Content"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: "📥 Checkout repo"
+        uses: actions/checkout@v4
+
+      - name: "🐍 Setup Python"
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: "📦 Install dependencies"
+        run: |
+          pip install -r requirements.txt
+          # Install ffmpeg
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: "🔑 Setup Google credentials"
+        run: |
+          mkdir -p credentials
+          echo '${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}' > credentials/service_account.json
+          echo '${{ secrets.YOUTUBE_CLIENT_SECRET }}' > credentials/youtube_client_secret.json
+          echo '${{ secrets.YOUTUBE_TOKEN }}' > credentials/youtube_token.json
+        shell: bash
+
+      - name: "🔧 Setup fonts"
+        run: |
+          mkdir -p fonts
+          # Download Montserrat font (Google Fonts, SIL Open Font License)
+          curl -L "https://github.com/JulietaUla/Montserrat/raw/master/fonts/ttf/Montserrat-Bold.ttf" -o fonts/Montserrat-Bold.ttf
+          curl -L "https://github.com/JulietaUla/Montserrat/raw/master/fonts/ttf/Montserrat-Regular.ttf" -o fonts/Montserrat-Regular.ttf
+          curl -L "https://github.com/JulietaUla/Montserrat/raw/master/fonts/ttf/Montserrat-Black.ttf" -o fonts/Montserrat-Black.ttf
+
+      - name: "🎬 Generate content"
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVENLABS_VOICE_ID: ${{ secrets.ELEVENLABS_VOICE_ID }}
+          GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+          GOOGLE_CREDENTIALS_PATH: credentials/service_account.json
+          YOUTUBE_CLIENT_SECRET_PATH: credentials/youtube_client_secret.json
+          YOUTUBE_TOKEN_PATH: credentials/youtube_token.json
+          TIKTOK_ACCESS_TOKEN: ${{ secrets.TIKTOK_ACCESS_TOKEN }}
+        run: |
+          # Determine parameters
+          COUNT="${{ github.event.inputs.count || '1' }}"
+          PILLAR="${{ github.event.inputs.pillar || '' }}"
+          SKIP_UPLOAD="${{ github.event.inputs.skip_upload || 'false' }}"
+          DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
+
+          # Build command
+          CMD="python -m src.generate --count $COUNT"
+
+          if [ -n "$PILLAR" ]; then
+            CMD="$CMD --pillar $PILLAR"
+          fi
+
+          if [ "$SKIP_UPLOAD" = "true" ]; then
+            CMD="$CMD --no-upload"
+          fi
+
+          if [ "$DRY_RUN" = "true" ]; then
+            CMD="$CMD --dry-run"
+          fi
+
+          echo "🚀 Running: $CMD"
+          $CMD
+
+      - name: "📊 Upload run report"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: "content-run-${{ github.run_number }}"
+          path: |
+            output/run_*.json
+            output/*/scenario.json
+          retention-days: 30
+
+      - name: "📹 Upload generated videos"
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: "videos-${{ github.run_number }}"
+          path: output/**/*.mp4
+          retention-days: 7
