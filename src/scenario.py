@@ -1,6 +1,6 @@
 """
 Content Engine — Scenario Generator
-Generates viral TikTok/Shorts scripts using Gemini AI.
+Generates viral TikTok/Shorts scripts using Gemini AI (new google-genai SDK).
 Supports multi-brand: each brand has its own system prompt, pillars, and style.
 """
 
@@ -10,7 +10,8 @@ import os
 from pathlib import Path
 from typing import Optional
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from pydantic import BaseModel
 
 from src.brand import BrandConfig
@@ -21,16 +22,16 @@ from src.brand import BrandConfig
 class Slide(BaseModel):
     """Single slide in the video."""
     slide_number: int
-    text_on_screen: str        # Short text overlay (max 15 words)
-    tts_script: str             # What the voice says (can be longer)
-    image_prompt: str           # Prompt for background image generation
-    duration_hint: float = 0.0  # Will be set by TTS audio length
+    text_on_screen: str
+    tts_script: str
+    image_prompt: str
+    duration_hint: float = 0.0
 
 
 class Scenario(BaseModel):
     """Complete video scenario."""
     id: str
-    brand_id: str               # Which brand this belongs to
+    brand_id: str
     title: str
     pillar: str
     hook: str
@@ -92,23 +93,17 @@ class ScenarioGenerator:
         if not api_key:
             raise ValueError("GOOGLE_API_KEY environment variable not set")
 
-        genai.configure(api_key=api_key)
-        model_name = self.config["scenario"]["model"]
+        self.client = genai.Client(api_key=api_key)
+        self.model_name = self.config["scenario"]["model"]
 
-        # Use brand-specific system prompt
-        system_prompt = self.bc.system_prompt
-        if not system_prompt:
+        self.system_prompt = self.bc.system_prompt
+        if not self.system_prompt:
             raise ValueError(f"No system_prompt defined for brand '{self.bc.brand_id}'")
 
-        self.model = genai.GenerativeModel(
-            model_name=model_name,
-            system_instruction=system_prompt,
-        )
         self.pillars = self.bc.pillars
         self.slides_count = self.config["scenario"].get("slides_count", 5)
 
     def _pick_pillar(self, pillar_id: Optional[str] = None) -> dict:
-        """Pick a content pillar (weighted random or specific)."""
         if pillar_id:
             for p in self.pillars:
                 if p["id"] == pillar_id:
@@ -117,7 +112,6 @@ class ScenarioGenerator:
                 f"Unknown pillar '{pillar_id}' for brand '{self.bc.brand_id}'. "
                 f"Available: {', '.join(self.bc.pillar_ids)}"
             )
-
         weights = [p["weight"] for p in self.pillars]
         return random.choices(self.pillars, weights=weights, k=1)[0]
 
@@ -126,32 +120,60 @@ class ScenarioGenerator:
         count: int = 1,
         pillar_id: Optional[str] = None,
     ) -> list[Scenario]:
-        """Generate video scenarios."""
-        pillar = self._pick_pillar(pillar_id)
+        prompt = self._pick_pillar(pillar_id)
 
-        prompt = GENERATION_PROMPT.format(
+        user_prompt = GENERATION_PROMPT.format(
             count=count,
-            pillar_name=pillar["name"],
-            pillar_description=pillar["description"],
-            pillar_id=pillar["id"],
+            pillar_name=prompt["name"],
+            pillar_description=prompt["description"],
+            pillar_id=prompt["id"],
             slides_count=self.slides_count,
         )
 
-        response = self.model.generate_content(
-            prompt,
-            generation_config=genai.GenerationConfig(
+        response = self.client.models.generate_content(
+            model=self.model_name,
+            contents=user_prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=self.system_prompt,
                 response_mime_type="application/json",
                 temperature=0.9,
                 top_p=0.95,
             ),
         )
 
-        raw = json.loads(response.text)
+        # Parse JSON response (with cleanup for common Gemini quirks)
+        text = response.text.strip()
+        # Sometimes Gemini wraps JSON in markdown code blocks
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1]  # Remove first line
+            if text.endswith("```"):
+                text = text[:-3]
+            text = text.strip()
+
+        try:
+            raw = json.loads(text)
+        except json.JSONDecodeError:
+            # Try to fix common JSON issues and extract
+            import re
+            # Remove trailing commas before } or ]
+            cleaned = re.sub(r',\s*([\]}])', r'\1', text)
+            # Fix unescaped single quotes inside strings
+            cleaned = cleaned.replace("'", "\u2019")
+            try:
+                raw = json.loads(cleaned)
+            except json.JSONDecodeError:
+                # Last resort: extract first JSON object
+                match = re.search(r'\{[\s\S]*\}', cleaned)
+                if match:
+                    raw = json.loads(match.group())
+                else:
+                    raise ValueError(f"Could not parse Gemini response as JSON: {text[:300]}...")
+
         scenarios = []
 
         brand_prefix = self.bc.brand_id[:3]
         for i, item in enumerate(raw.get("scenarios", [raw] if "title" in raw else [])):
-            scenario_id = f"{brand_prefix}_{pillar['id']}_{random.randint(1000, 9999)}"
+            scenario_id = f"{brand_prefix}_{prompt['id']}_{random.randint(1000, 9999)}"
             slides = [
                 Slide(
                     slide_number=s["slide_number"],
@@ -162,14 +184,7 @@ class ScenarioGenerator:
                 for s in item["slides"]
             ]
 
-            # Merge brand default tags with scenario hashtags
-            default_tags = (
-                self.config.get("upload", {})
-                .get("youtube", {})
-                .get("default_tags", [])
-            )
             hashtags = item.get("hashtags", [])
-            # Add brand hashtag if not present
             brand_tag = f"#{self.bc.brand_name.replace(' ', '')}"
             if brand_tag not in hashtags:
                 hashtags.append(brand_tag)
@@ -178,7 +193,7 @@ class ScenarioGenerator:
                 id=scenario_id,
                 brand_id=self.bc.brand_id,
                 title=item["title"],
-                pillar=item.get("pillar", pillar["id"]),
+                pillar=item.get("pillar", prompt["id"]),
                 hook=item["hook"],
                 slides=slides,
                 hashtags=hashtags,
@@ -190,7 +205,6 @@ class ScenarioGenerator:
         return scenarios
 
     def save_scenario(self, scenario: Scenario, output_dir: str = "output") -> str:
-        """Save scenario to JSON file."""
         path = Path(output_dir) / scenario.id
         path.mkdir(parents=True, exist_ok=True)
         file_path = path / "scenario.json"

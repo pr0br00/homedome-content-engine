@@ -1,15 +1,15 @@
 """
 Content Engine — Image Generator
-Generates background images for slides using Google Gemini/Imagen.
+Generates background images for slides using Google Gemini (new google-genai SDK).
 Multi-brand: uses shared API config.
 """
 
-import base64
 import os
 from pathlib import Path
 from typing import Optional
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 from src.brand import BrandConfig
 
@@ -25,7 +25,7 @@ class ImageGenerator:
         if not api_key:
             raise ValueError("GOOGLE_API_KEY environment variable not set")
 
-        genai.configure(api_key=api_key)
+        self.client = genai.Client(api_key=api_key)
 
     def generate_image(
         self,
@@ -46,25 +46,32 @@ class ImageGenerator:
             f"No text, no watermarks, no logos."
         )
 
+        # Try Imagen 3 first, fall back to Gemini Flash
         try:
             return self._generate_with_imagen(full_prompt, output_path)
         except Exception as e:
-            print(f"⚠️  Imagen failed ({e}), falling back to Gemini...")
-            return self._generate_with_gemini(full_prompt, output_path)
+            print(f"    ⚠️  Imagen failed ({e}), trying Gemini Flash...")
+            try:
+                return self._generate_with_gemini(full_prompt, output_path)
+            except Exception as e2:
+                print(f"    ⚠️  Gemini Flash failed ({e2}), using fallback gradient")
+                return self._create_fallback_image(output_path)
 
     def _generate_with_imagen(self, prompt: str, output_path: str) -> str:
         """Generate image using Imagen 3 model."""
-        imagen = genai.ImageGenerationModel("imagen-3.0-generate-001")
-        result = imagen.generate_images(
+        response = self.client.models.generate_images(
+            model="imagen-3.0-generate-001",
             prompt=prompt,
-            number_of_images=1,
-            safety_filter_level="block_only_high",
-            person_generation="dont_allow",
-            aspect_ratio="9:16",
+            config=types.GenerateImagesConfig(
+                number_of_images=1,
+                safety_filter_level="BLOCK_ONLY_HIGH",
+                person_generation="DONT_ALLOW",
+                aspect_ratio="9:16",
+            ),
         )
 
-        if result.images:
-            img_data = result.images[0]._image_bytes
+        if response.generated_images:
+            img_data = response.generated_images[0].image.image_bytes
             Path(output_path).parent.mkdir(parents=True, exist_ok=True)
             with open(output_path, "wb") as f:
                 f.write(img_data)
@@ -72,19 +79,20 @@ class ImageGenerator:
         raise RuntimeError("Imagen returned no images")
 
     def _generate_with_gemini(self, prompt: str, output_path: str) -> str:
-        """Generate image using Gemini model with image generation capability."""
-        model = genai.GenerativeModel("gemini-2.5-flash-image")
-        response = model.generate_content(
-            f"Generate an image: {prompt}",
-            generation_config=genai.GenerationConfig(
-                response_modalities=["image", "text"],
+        """Generate image using Gemini Flash with image output."""
+        response = self.client.models.generate_content(
+            model="gemini-2.5-flash-image",
+            contents=f"Generate an image: {prompt}",
+            config=types.GenerateContentConfig(
+                response_modalities=["IMAGE", "TEXT"],
             ),
         )
 
         for part in response.candidates[0].content.parts:
-            if hasattr(part, "inline_data") and part.inline_data:
+            if part.inline_data and part.inline_data.data:
                 img_data = part.inline_data.data
                 if isinstance(img_data, str):
+                    import base64
                     img_data = base64.b64decode(img_data)
 
                 Path(output_path).parent.mkdir(parents=True, exist_ok=True)
@@ -136,16 +144,3 @@ class ImageGenerator:
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         img.save(output_path, "PNG")
         return output_path
-
-
-if __name__ == "__main__":
-    from dotenv import load_dotenv
-    load_dotenv()
-
-    bc = BrandConfig()
-    gen = ImageGenerator(bc)
-    gen.generate_image(
-        prompt="Modern home with solar panels on rooftop, Ukrainian suburban setting, golden hour",
-        output_path="output/test_image.png",
-    )
-    print("✅ Test image generated")
